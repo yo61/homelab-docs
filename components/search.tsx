@@ -24,7 +24,7 @@ function initOrama() {
 
 // Prefix the static-search fetch URL with the site's basePath. Without
 // this the Fumadocs static client defaults to `/api/search`, which
-// 404s on a basePath-mounted site (e.g. `/flux-homelab`). NEXT_PUBLIC_BASE_PATH
+// 404s on a basePath-mounted site (e.g. `/homelab-docs`). NEXT_PUBLIC_BASE_PATH
 // is set in next.config.mjs.
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
 

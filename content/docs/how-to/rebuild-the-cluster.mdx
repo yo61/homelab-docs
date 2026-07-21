@@ -17,6 +17,24 @@ the private `flux-homelab` repo; the commands reference its `talos/` and
   destructive and irreversible — get an explicit go-ahead before running them.
 </Callout>
 
+## Key
+
+Names and addresses the commands below use. Full detail (installer schematic,
+iSCSI IQNs, LAG ports, key files) is in [Environment](/reference/environment).
+
+| | |
+| --- | --- |
+| Nodes | `k8s-01`, `k8s-02`, `k8s-03` |
+| Subnet | `192.168.20.0/24` (VLAN 20) |
+| Domain | `lab.yo61.net` |
+| Node IPs (bonded) | `192.168.20.11` / `.12` / `.13` |
+| API VIP (floating) | `192.168.20.9` |
+| NAS | `nas1.lab.yo61.net` (`192.168.20.10`) — TrueNAS + OpenBao |
+
+**Tools:** `talhelper`, `talosctl`, `flux`, `kubectl`, `cilium`, `helm`, `prek`,
+`jq`, `op` (1Password CLI) — plus **`unifictl`**, a custom tool (by yo61) that
+toggles the UniFi switch LAG bonds by leader port.
+
 ## Prerequisites (Phase 0 — non-destructive)
 
 The rebuild pulls from GitHub, so **anything uncommitted = you re-hit that bug.**

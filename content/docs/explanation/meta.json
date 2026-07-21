@@ -2,6 +2,8 @@
   "title": "Explanation",
   "pages": [
     "index",
+    "cilium-day0-day2",
+    "talos-rebuild-gotchas",
     "why-gitops"
   ]
 }

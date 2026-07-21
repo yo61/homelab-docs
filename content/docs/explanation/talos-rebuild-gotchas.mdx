@@ -1,0 +1,91 @@
+---
+title: Talos rebuild gotchas
+description: Non-obvious failure modes hit during a rebuild, and the declarative fixes
+---
+
+The failure modes a full [cluster rebuild](/how-to/rebuild-the-cluster) can hit,
+why each happens, and the fix — which in every case is already committed to the
+repo. Each is deep-linked from the rebuild how-to.
+
+## LACP
+
+**Symptom:** a node won't PXE-boot or stay reachable after `talosctl reset`.
+
+**Why:** each node is a two-port UniFi LACP bond. A node in Talos maintenance mode
+has no `bond0` / LACP running, so an aggregated switch-port pair has no partner to
+negotiate with — nothing comes up on it. So switch aggregation must be **off**
+before the nodes reboot into PXE and stay off through maintenance mode and the
+config apply. But you can't drop aggregation while a node is still running:
+`bond0` carries both its static IP and the API path the reset travels over, so
+cutting it first loses the address you need to target the reset.
+
+**Fix (ordering):** reset all three nodes at their static IPs with the bonds still
+up (`reset` returns immediately, so a loop fires all three), *then* drop
+aggregation on every port while they wipe, and re-enable it only once each node
+reboots with `bond0` at the end of the config apply. `unifictl set lag off/on
+--leader 17,19,21` toggles all three bonds.
+
+## PodSecurity
+
+**Symptom:** after bootstrap, `kube-apiserver` crashloops; its log ends in
+`PodSecurity invalid: exemptions.namespaces[1]: Duplicate value: "kube-system"`.
+controller-manager and scheduler go down with it (no leader lease without the
+apiserver).
+
+**Why:** Talos already generates a default PodSecurity `admissionControl` config
+that exempts `kube-system`. Re-declaring PodSecurity in `patches/cluster.yaml`
+makes the strategic-merge patch **append** to `exemptions.namespaces`, so
+`kube-system` is listed twice and the apiserver refuses to start.
+
+**Fix:** don't pin PodSecurity in the patch — Talos' default is byte-identical. If
+you ever must customise it, **replace** the whole `admissionControl` list rather
+than merging into it.
+
+## iSCSI IQN
+
+**Symptom:** iSCSI volumes won't mount after a rebuild — pods stuck `Init:0/1`,
+event `FailedMount … iSCSI target not found in node database after discovery … No
+portals found`.
+
+**Why:** a wipe makes Talos generate a *new random* initiator IQN
+(`iqn.2017-11.dev.talos:<hash>`) on every node. TrueNAS filters discovery by
+initiator, so if that IQN isn't in the target's Allowed Initiators, the target is
+hidden → discovery returns nothing → every tns-csi volume fails to stage.
+
+**Fix:** `talconfig.yaml` pins a static per-node IQN by writing
+`/etc/iscsi/initiatorname.iscsi` via `machine.files` (`op: overwrite`, per node) →
+`iqn.2026-07.net.yo61.lab:k8s-0N`. Those three go in the TrueNAS Allowed
+Initiators list. Use `machine.files`, **not** an `ExtensionServiceConfig` — an ESC
+only overrides `ext-iscsid`'s in-container view and leaves the Talos-generated
+host file stale (a red herring that shows the old IQN in `talosctl read` while
+iscsid presents the static one on the wire).
+
+## pending-install
+
+**Symptom:** a HelmRelease sits at `pending-install` in `helm list` and never
+reaches `deployed`.
+
+**Why:** it's Helm's "install started but never confirmed all resources ready"
+state — not a cause in itself. On this cluster the helm-controller drives Helm, so
+Flux is the source of truth. `pending-install` also *locks* retries: an
+interrupted install reports "another operation (install/upgrade/rollback) is in
+progress" on the next reconcile — a stuck lock, not the error.
+
+**Fix:** drill top-to-bottom — `flux -n <ns> get helmrelease <name>` and
+`kubectl -n <ns> describe helmrelease <name>` carry the real message; then
+`helm history`, then the un-ready pod. Flux usually clears the lock; force a clean
+attempt with `flux -n <ns> suspend hr <name> && flux -n <ns> resume hr <name>`.
+
+## node-exporter PSS
+
+**Symptom:** `kube-prometheus-stack` hangs; the node-exporter DaemonSet is 0-ready
+with event `violates PodSecurity "baseline": host namespaces / hostPath /
+hostPort`.
+
+**Why:** node-exporter needs host access, which exceeds the cluster-default
+baseline Pod Security Standard.
+
+**Fix:** the `monitoring` namespace is labelled
+`pod-security.kubernetes.io/enforce: privileged` (in
+`apps/monitoring/kube-prometheus-stack.yaml`). Any host-level DaemonSet
+(node-exporter, CSI) needs this.

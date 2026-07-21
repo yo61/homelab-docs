@@ -1,0 +1,39 @@
+---
+title: Drain a node before a reboot
+description: Safely cordon and evict a node before any ad-hoc reboot
+---
+
+For any manual reboot (config change, hardware, testing) on the **running**
+cluster. A `talosctl upgrade`/`upgrade-k8s` drains for you, so this is only for
+reboots you trigger yourself.
+
+```bash
+NODE=k8s-01        # one node at a time
+
+kubectl drain "$NODE" --ignore-daemonsets --delete-emptydir-data
+# ...reboot, e.g. talosctl -n <ip> reboot ...
+kubectl wait --for=condition=Ready node/"$NODE" --timeout=10m
+kubectl uncordon "$NODE"
+```
+
+`drain` cordons first, then evicts. The two flags are effectively mandatory:
+
+- **`--ignore-daemonsets`** — Cilium, node-exporter and tns-csi run as DaemonSets
+  and can't be evicted (they'd reschedule onto the same node), so drain refuses to
+  start without it. Those pods go down with the node and return with it.
+- **`--delete-emptydir-data`** — several stack pods use `emptyDir` scratch; drain
+  won't evict them unless you acknowledge the data is lost. Add `--force` only if a
+  bare (controller-less) pod blocks it.
+
+Two constraints specific to this cluster:
+
+- **One node at a time.** It's a 3-node HA control plane (quorum = 2). Rebooting
+  one keeps 2/3 and the API stays up; draining a second before the first is back
+  `Ready` drops to 1/3 and freezes the control plane. Wait for the `kubectl wait`
+  above before the next. The nodes are also workload nodes
+  (`allowSchedulingOnControlPlanes: true`), so a drain does real eviction.
+- **A clean drain unmounts iSCSI properly.** Orderly eviction unmounts the
+  `truenas-iscsi` PVC and logs the initiator out of the target; a hard reboot can
+  leave a stale session on TrueNAS. If a drain hangs on "would violate the
+  disruption budget", that's a PDB working as intended — wait it out, don't
+  `--force` past it on a stateful pod.

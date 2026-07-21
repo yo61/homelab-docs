@@ -1,0 +1,232 @@
+---
+title: Rebuild the cluster
+description: Wipe all three nodes and rebuild the cluster from checked-in config
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Tear the cluster down and rebuild it **entirely from checked-in config** — the
+real test that the declarative setup works end-to-end. Run this from a checkout of
+the private `flux-homelab` repo; the commands reference its `talos/` and
+`clusterconfig/`. Fixed values (IPs, node names, schematic) are in
+[Environment](/reference/environment); the "why day-0 networking just works" is in
+[Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2).
+
+<Callout type="warn">
+  Phase 1 wipes all three nodes and Phase 4 can delete zvols on the NAS. These are
+  destructive and irreversible — get an explicit go-ahead before running them.
+</Callout>
+
+## Prerequisites (Phase 0 — non-destructive)
+
+The rebuild pulls from GitHub, so **anything uncommitted = you re-hit that bug.**
+
+```bash
+cd ~/code/github.com/yo61/flux-homelab
+git status --porcelain      # expect: clean tree
+git log origin/main..HEAD   # expect: nothing unpushed
+
+cd talos
+talhelper validate talconfig                 # "your talconfig is looking great!"
+talhelper genconfig                          # writes clusterconfig/*.yaml
+grep -h metal-installer clusterconfig/homelab-k8s-01.yaml   # schematic 3a33ec6…
+grep InitiatorName clusterconfig/homelab-k8s-01.yaml        # iqn.2026-07.net.yo61.lab:k8s-01
+
+curl -s http://192.168.20.10:8200/v1/sys/seal-status | jq '{sealed, initialized}'  # sealed:false
+test -f talsecret.yaml && echo present       # restored from 1Password
+nc -zv 192.168.20.10 3260                     # TrueNAS iSCSI portal open
+for t in talhelper talosctl flux kubectl cilium helm prek unifictl; do command -v "$t" >/dev/null && echo "ok $t" || echo "MISSING $t"; done
+```
+
+Also have to hand (manual): the Flux GitHub App creds (numeric **App ID**,
+Installation ID, `.pem` from OpenBao) and ESO's **SECRET_ID**; confirm
+netboot.xyz is in place; and the TrueNAS Allowed Initiators list is exactly the
+three static IQNs. Restore the **same** `talsecret.yaml` — same PKI, so it can
+reset the running nodes and reproduce the trusted `talosconfig`.
+
+## Phase 1 — Teardown
+
+<Callout type="warn">Destructive: this wipes all three nodes.</Callout>
+
+```bash
+cd ~/code/github.com/yo61/flux-homelab/talos
+talhelper genconfig
+export TALOSCONFIG=$PWD/clusterconfig/talosconfig
+
+# 1. Reset all three at their static IPs while the bonds are still up
+for IP in 192.168.20.11 192.168.20.12 192.168.20.13; do
+  talosctl reset --nodes "$IP" --endpoints "$IP" --graceful=false --wipe-mode all --reboot --wait=false
+done
+
+# 2. Now drop link aggregation while they wipe
+unifictl set lag off --leader 17,19,21
+```
+
+The reset/LAG **ordering** is deliberate — [why](/explanation/talos-rebuild-gotchas#lacp).
+Each node reboots → PXE → Talos maintenance mode on a **transient DHCP IP**. Note
+each one and confirm it answers (`--insecure` **after** the subcommand — it's a
+command-local flag):
+
+```bash
+talosctl -n <dhcp-ip> version --insecure
+```
+
+## Phase 2 — Reinstall + bootstrap
+
+**2a — Apply each node's config (maintenance mode).** This is the one step where
+you don't run the printed command verbatim: `gencommand apply` targets the final
+IPs, but the nodes are on their transient DHCP IPs. Print, then run each with its
+`--nodes` swapped:
+
+```bash
+talhelper gencommand apply --extra-flags=--insecure   # PRINTS one apply per node
+```
+```bash
+talosctl apply-config --talosconfig=./clusterconfig/talosconfig \
+  --nodes=<dhcp-ip> --file=./clusterconfig/homelab-k8s-0N.yaml --insecure
+```
+
+Each node installs to `/dev/nvme0n1` and reboots with `bond0`. **Now re-enable
+aggregation** so LACP forms and the nodes return on their static IPs:
+
+```bash
+unifictl set lag on --leader 17,19,21
+```
+
+**2b–2c — Bootstrap etcd and write kubeconfig** (no more `--insecure`):
+
+```bash
+talhelper gencommand bootstrap     # PRINTS — review, then run (once, one node)
+talhelper gencommand kubeconfig    # PRINTS — review, then run
+talosctl -n 192.168.20.11 kubeconfig --force   # overwrite the old cluster's PKI
+```
+
+**2d — Wait.** Cilium installs itself from the inline manifest — nodes go `Ready`
+with **no manual CNI step** (the day-0 proof):
+
+```bash
+talosctl -n 192.168.20.9 health --wait-timeout 10m
+kubectl get nodes -o wide                          # all 3 Ready
+kubectl -n kube-system get pods -l k8s-app=cilium  # Cilium running
+```
+
+**2e — Approve the kubelet serving-cert CSRs** (one-time; the auto-approver
+arrives via Flux in Phase 3):
+
+```bash
+kubectl get csr                                    # kubernetes.io/kubelet-serving = Pending
+kubectl get csr -o name | xargs -r kubectl certificate approve
+```
+
+If the apiserver crashloops here, it's usually the
+[duplicate PodSecurity exemption](/explanation/talos-rebuild-gotchas#podsecurity).
+
+## Phase 3 — Flux + the out-of-band secrets
+
+A from-scratch cluster bootstrap against the existing repo, via the Flux Operator
++ a `FluxInstance` (GitHub App auth). The `BOOTSTRAP.md` runbook in the repo has
+fuller detail; the rebuild-specific order:
+
+```bash
+flux check --pre
+helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
+  --namespace flux-system --create-namespace
+
+# First out-of-band secret: the GitHub App key (NUMERIC App ID, .pem from OpenBao)
+flux create secret githubapp flux-system \
+  --app-id=<NUMERIC_APP_ID> --app-installation-id=<INSTALLATION_ID> \
+  --app-private-key=./flux-homelab-app.private-key.pem
+
+# Second out-of-band secret: ESO's AppRole SECRET_ID (never commit or echo)
+kubectl create namespace external-secrets 2>/dev/null || true
+kubectl -n external-secrets create secret generic openbao-approle --from-literal=secret-id='<SECRET_ID>'
+
+# Apply the FluxInstance (this is what makes the operator deploy the controllers)
+kubectl apply -f - <<'EOF'
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: { name: flux, namespace: flux-system }
+spec:
+  distribution: { version: "2.x", registry: "ghcr.io/fluxcd" }
+  components: [source-controller, kustomize-controller, helm-controller, notification-controller]
+  cluster: { type: kubernetes, domain: "cluster.local" }
+  sync:
+    kind: GitRepository
+    provider: github
+    url: "https://github.com/yo61/flux-homelab.git"
+    ref: "refs/heads/main"
+    path: "clusters/homelab"
+    pullSecret: "flux-system"
+EOF
+flux get kustomizations --watch   # flux-system → infra-controllers → infra-secrets → infra-configs → apps
+```
+
+Create both out-of-band secrets **before** the `FluxInstance`, so no Kustomization
+reconciles against a missing secret. If `infra-secrets` hangs (`wait: true`),
+OpenBao is likely sealed or the AppRole is wrong.
+
+### Cilium adoption checkpoint
+
+When `infra-controllers` reconciles, the Cilium HelmRelease **adopts** the
+inline-created resources — see
+[Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2). Normally floor
+and target are the same version (no-op); if the floor is behind, Flux rolls the
+DaemonSet to the target.
+
+```bash
+flux get helmrelease -n kube-system cilium
+kubectl -n kube-system get ds cilium -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+helm list -n kube-system | grep cilium
+```
+
+## Phase 4 — Verify
+
+Every line of live output should trace back to a file in the repo (see
+`SERVICES.md`). Quick hits:
+
+```bash
+kubectl get nodes -o wide
+helm list -A
+kubectl get externalsecrets -A                  # all SecretSynced
+kubectl get clustersecretstore homelab-openbao   # Valid
+kubectl get storageclass                         # truenas-iscsi present
+kubectl top nodes                                # metrics-server working
+```
+
+Then bind a test PVC on `truenas-iscsi` **and mount it in a pod** — a `Bound` PVC
+only proves provisioning, not the node-side iSCSI login, which is a separate path
+that can fail on its own.
+
+### Reclaim orphaned iSCSI volumes
+
+A wipe kills the old cluster before tns-csi can delete its volumes, so each old
+`pvc-*` survives on TrueNAS as four objects — a zvol plus an iSCSI extent, target,
+and target-extent association. They're inert (UUID names can't collide with the
+new cluster), so this is tidy-up, not a blocker — do it once the cluster is back
+and can say exactly what's in use.
+
+```bash
+# in-use zvols, from the cluster (all PVs, any phase)
+kubectl get pv -o json \
+  | jq -r '.items[] | select(.spec.csi.driver=="tns.csi.io") | .spec.csi.volumeHandle' \
+  | sort > /tmp/inuse-zvols.txt
+# every zvol on TrueNAS (read-only)
+ssh root@192.168.20.10 'zfs list -H -o name -t volume -r space/k8s/iscsi/volumes' | sort > /tmp/all-zvols.txt
+# orphans = on TrueNAS, not in use
+comm -13 /tmp/inuse-zvols.txt /tmp/all-zvols.txt
+```
+
+For each orphan, delete the iSCSI objects in dependency order through the TrueNAS
+UI (**Shares → Block (iSCSI)**): Associated Target, then Target, then Extent — then
+destroy the now-unreferenced zvol (`zfs destroy -nv …`; drop `-n` to apply). Re-run
+the diff to confirm it's empty.
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| Node won't PXE / stay reachable after reset | Aggregation was dropped in the wrong order — [LACP](/explanation/talos-rebuild-gotchas#lacp) |
+| `kube-apiserver` crashloops, "Duplicate value: kube-system" | [PodSecurity](/explanation/talos-rebuild-gotchas#podsecurity) — don't pin it in the patch |
+| iSCSI volume stuck `Init:0/1`, "No portals found" | Stale initiator IQN — [iSCSI IQN](/explanation/talos-rebuild-gotchas#iscsi-iqn) |
+| HelmRelease stuck `pending-install` | [pending-install](/explanation/talos-rebuild-gotchas#pending-install) — drill down, `suspend`/`resume` |
+| kube-prometheus-stack hangs, node-exporter 0-ready | [node-exporter PSS](/explanation/talos-rebuild-gotchas#node-exporter-pss) — namespace needs `privileged` |

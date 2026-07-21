@@ -2,6 +2,7 @@
   "title": "How-to",
   "pages": [
     "index",
+    "rebuild-the-cluster",
     "add-a-new-service"
   ]
 }

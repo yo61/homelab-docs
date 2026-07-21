@@ -1,0 +1,77 @@
+---
+title: Environment
+description: Nodes, addresses, versions, install media, and key files for the cluster
+---
+
+Authoritative lookup for the cluster's fixed facts. Procedures link here rather
+than repeating these values; if something changes, change it here.
+
+## Nodes and network
+
+| Node | IP | Notes |
+| --- | --- | --- |
+| `k8s-01` | `192.168.20.11` | control plane + workload |
+| `k8s-02` | `192.168.20.12` | control plane + workload |
+| `k8s-03` | `192.168.20.13` | control plane + workload |
+| API VIP | `192.168.20.9` | shared, `:6443` |
+
+- **VLAN 20.** 3-node HA control plane with `allowSchedulingOnControlPlanes: true`
+  (the nodes are also workload nodes).
+
+## Versions
+
+| Component | Version |
+| --- | --- |
+| Talos | `v1.13.6` |
+| Kubernetes | `v1.36.2` |
+| Cilium | day-0 inline floor **1.19.6**; day-2 Flux HelmRelease target **1.19.6** |
+
+Cilium is a two-layer setup — see
+[Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2). kube-proxy is
+replaced (`cniConfig.name: none` in talconfig + `cluster.proxy.disabled: true` in
+the patch).
+
+## Install media
+
+- **Install disk:** `/dev/nvme0n1`.
+- **Installer image:** resolved by talhelper from the extension set in
+  `talconfig.yaml` (`siderolabs/amdgpu` + `iscsi-tools` + `util-linux-tools`) →
+  factory `metal-installer`, schematic
+  `3a33ec6dfc8cfd61d2a3db3caf97894f31e913952d71ce3c3fbbe565a3f08339`. If the
+  `metal-installer` hash differs at genconfig time, the extension set is wrong —
+  stop and fix, or you rebuild without `iscsi-tools`.
+
+## Storage and secrets
+
+- **TrueNAS** `192.168.20.10` (SCALE 26.0.0-BETA.2), pool `space`, iSCSI on.
+- **OpenBao** at `http://192.168.20.10:8200` (the secret store ESO reads); must be
+  **unsealed** for ESO to sync.
+- **iSCSI initiator IQNs** (static, per node, pinned via `machine.files`):
+  `iqn.2026-07.net.yo61.lab:k8s-01` / `:k8s-02` / `:k8s-03`. These three — and only
+  these — go in the TrueNAS **Allowed Initiators** list.
+
+## Switch / LAG
+
+Each node is a two-port UniFi LACP bond:
+
+| Node | Ports | Leader (odd) |
+| --- | --- | --- |
+| `k8s-01` | 17, 18 | 17 |
+| `k8s-02` | 19, 20 | 19 |
+| `k8s-03` | 21, 22 | 21 |
+
+`unifictl` toggles a whole bond by its leader port, so `--leader 17,19,21` acts on
+all three. Aggregation must be off while a node is in Talos maintenance mode — see
+[Talos rebuild gotchas → LACP](/explanation/talos-rebuild-gotchas#lacp).
+
+## Key files (in the `flux-homelab` repo)
+
+| File | Role |
+| --- | --- |
+| `talos/talconfig.yaml` | single source of truth: cluster + per-node settings, extension schematic |
+| `talos/patches/{machine,cluster,cilium}.yaml` | shared patches (kubelet/install, PodSecurity/discovery, Cilium day-0) |
+| `talos/talsecret.yaml` | **secret** PKI bundle — gitignored, restored from 1Password; never commit/echo |
+| `talos/clusterconfig/` | generated machine configs + talosconfig — gitignored, ephemeral |
+| `talos/README.md` | the talhelper workflow in full |
+| `BOOTSTRAP.md` | the exact Flux bootstrap command order |
+| `SERVICES.md` | what should be running + how to reach it |

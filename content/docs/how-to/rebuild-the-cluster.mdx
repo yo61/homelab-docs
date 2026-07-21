@@ -8,32 +8,17 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Tear the cluster down and rebuild it **entirely from checked-in config** — the
 real test that the declarative setup works end-to-end. Run this from a checkout of
 the private `flux-homelab` repo; the commands reference its `talos/` and
-`clusterconfig/`. Fixed values (IPs, node names, schematic) are in
-[Environment](/reference/environment); the "why day-0 networking just works" is in
+`clusterconfig/`.
+
+The node names, addresses, subnet, domain, NAS, versions, and tools the commands
+below use are all in **[Environment](/reference/environment)** — keep it open
+alongside this guide. The "why day-0 networking just works" is in
 [Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2).
 
 <Callout type="warn">
   Phase 1 wipes all three nodes and Phase 4 can delete zvols on the NAS. These are
   destructive and irreversible — get an explicit go-ahead before running them.
 </Callout>
-
-## Key
-
-Names and addresses the commands below use. Full detail (installer schematic,
-iSCSI IQNs, LAG ports, key files) is in [Environment](/reference/environment).
-
-| | |
-| --- | --- |
-| Nodes | `k8s-01`, `k8s-02`, `k8s-03` |
-| Subnet | `192.168.20.0/24` (VLAN 20) |
-| Domain | `lab.yo61.net` |
-| Node IPs (bonded) | `192.168.20.11` / `.12` / `.13` |
-| API VIP (floating) | `192.168.20.9` |
-| NAS | `nas1.lab.yo61.net` (`192.168.20.10`) — TrueNAS + OpenBao |
-
-**Tools:** `talhelper`, `talosctl`, `flux`, `kubectl`, `cilium`, `helm`, `prek`,
-`jq`, `op` (1Password CLI) — plus **`unifictl`**, a custom tool (by yo61) that
-toggles the UniFi switch LAG bonds by leader port.
 
 ## Prerequisites (Phase 0 — non-destructive)
 

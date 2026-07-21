@@ -8,8 +8,11 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Tear the cluster down and rebuild it **entirely from checked-in config** — the
 real test that the declarative setup works end-to-end. Run this from a checkout of
 the private `flux-homelab` repo; the commands reference its `talos/` and
-`clusterconfig/`. Fixed values (IPs, node names, schematic) are in
-[Environment](/reference/environment); the "why day-0 networking just works" is in
+`clusterconfig/`.
+
+The node names, addresses, subnet, domain, NAS, versions, and tools the commands
+below use are all in **[Environment](/reference/environment)** — keep it open
+alongside this guide. The "why day-0 networking just works" is in
 [Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2).
 
 <Callout type="warn">

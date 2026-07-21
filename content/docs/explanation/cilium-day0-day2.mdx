@@ -1,0 +1,68 @@
+---
+title: 'Cilium: day-0 floor, day-2 Flux'
+description: Why Cilium boots from a Talos inline manifest and is upgraded by a Flux HelmRelease
+---
+
+Cilium is delivered in **two layers**: a day-0 bootstrap floor baked into the
+Talos machine config, and a day-2 Flux HelmRelease that owns it thereafter. This
+page explains why, and how the two coexist without fighting.
+
+## Why day-0 can't be Flux
+
+Flannel and kube-proxy are disabled — Cilium is the CNI and replaces kube-proxy.
+That means there is **no pod networking until Cilium is up**. Flux needs pod
+networking to run, so Flux can't be what installs Cilium: it's a chicken-and-egg.
+
+The declarative, no-manual-step answer on Talos is `inlineManifests` in the
+machine config. Talos applies them at bootstrap, over the host network, before the
+cluster has a CNI — so Cilium comes up and the nodes go `Ready` with zero manual
+intervention. The rendered manifest is embedded in `talos/patches/cilium.yaml` and
+produced from `cilium/values.yaml` by `helm template`.
+
+## The floor only has to boot networking
+
+Because the inline manifest is a **bootstrap-time** mechanism — Talos applies it
+once, at cluster bootstrap, and does **not** reconcile it into a running cluster —
+it's treated as a *frozen bootstrap floor*. It only has to be recent enough to
+bring networking up and be adoptable by the day-2 layer. Re-rendering it by hand
+is a rare event, not part of routine version bumps.
+
+## Day-2 is a Flux HelmRelease
+
+Once Flux is running, a HelmRelease (`infrastructure/controllers/cilium.yaml`)
+**adopts** the Cilium resources the inline manifest created and owns them from then
+on. Adoption is automatic: the Flux helm-controller takes ownership of pre-existing
+resources by default (`spec.install`/`spec.upgrade.disableTakeOwnership` defaults
+false), so it adopts the inline-created resources — which carry no Helm metadata —
+without conflict, on both the running cluster and every fresh bootstrap.
+
+Both layers read the **same** `cilium/values.yaml`: day-0 renders it into the
+inline manifest, and day-2 feeds it to the HelmRelease through a kustomize
+`configMapGenerator` → ConfigMap → `valuesFrom`. One edit updates both.
+
+From then on a Cilium version bump is an ordinary Renovate PR against the
+HelmRelease `version`, reviewed and reconciled by Flux — no `helm template`, no
+re-render, no `kubectl apply`.
+
+## Floor vs target: no-op or convergence
+
+The inline **floor** and the HelmRelease **target** are two independently-pinned
+versions:
+
+- **Same version** (the normal state): the first reconcile adopts the running
+  resources and changes nothing — a no-op roll.
+- **Floor behind target** (e.g. after a Renovate bump the floor hasn't caught up
+  to): Flux upgrades the running cluster to the target, rolling the `cilium` /
+  `cilium-envoy` DaemonSets once. On a fresh bootstrap the nodes come up on the
+  floor version and Flux converges them to the target.
+
+This was proven end-to-end on 2026-07-21: a full rebuild with the floor pinned one
+patch below the target booted Cilium 1.19.5 and Flux adopted and rolled it to
+1.19.6, with the cluster staying healthy throughout.
+
+## Recovery
+
+Because `infra-controllers` is `wait: true`, the whole GitOps cascade gates on the
+Cilium HelmRelease going Ready — a bad CNI reconcile stalls visibly rather than
+passing silently. And the inline floor is the recovery floor: a node reboot
+re-asserts a known-good Cilium regardless of Helm state.

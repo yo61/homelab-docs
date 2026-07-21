@@ -15,8 +15,9 @@ than repeating these values; if something changes, change it here.
 | `k8s-03` | `192.168.20.13` | control plane + workload |
 | API VIP | `192.168.20.9` | shared, `:6443` |
 
-- **VLAN 20.** 3-node HA control plane with `allowSchedulingOnControlPlanes: true`
-  (the nodes are also workload nodes).
+- **Subnet:** `192.168.20.0/24` (VLAN 20). **Domain:** `lab.yo61.net`.
+- 3-node HA control plane with `allowSchedulingOnControlPlanes: true` (the nodes
+  are also workload nodes).
 
 ## Versions
 
@@ -43,9 +44,10 @@ the patch).
 
 ## Storage and secrets
 
-- **TrueNAS** `192.168.20.10` (SCALE 26.0.0-BETA.2), pool `space`, iSCSI on.
-- **OpenBao** at `http://192.168.20.10:8200` (the secret store ESO reads); must be
-  **unsealed** for ESO to sync.
+- **NAS** `nas1.lab.yo61.net` (`192.168.20.10`) — TrueNAS SCALE 26.0.0-BETA.2, pool
+  `space`, iSCSI on.
+- **OpenBao** runs on the NAS at `http://192.168.20.10:8200` (the secret store ESO
+  reads); must be **unsealed** for ESO to sync.
 - **iSCSI initiator IQNs** (static, per node, pinned via `machine.files`):
   `iqn.2026-07.net.yo61.lab:k8s-01` / `:k8s-02` / `:k8s-03`. These three — and only
   these — go in the TrueNAS **Allowed Initiators** list.
@@ -63,6 +65,21 @@ Each node is a two-port UniFi LACP bond:
 `unifictl` toggles a whole bond by its leader port, so `--leader 17,19,21` acts on
 all three. Aggregation must be off while a node is in Talos maintenance mode — see
 [Talos rebuild gotchas → LACP](/explanation/talos-rebuild-gotchas#lacp).
+
+## Tools
+
+| Tool | Role |
+| --- | --- |
+| `talhelper` | renders Talos machine config from `talconfig.yaml` |
+| `talosctl` | Talos node control (reset, apply-config, bootstrap, health) |
+| `flux` | Flux CLI (bootstrap, reconcile, status) |
+| `kubectl` | Kubernetes control |
+| `cilium` | Cilium CLI (status) |
+| `helm` | Helm (inline-manifest re-render) |
+| `prek` | git hooks (Rust pre-commit replacement) |
+| `op` | 1Password CLI — pulls secrets straight into commands |
+| `jq` | JSON filtering |
+| `unifictl` | **custom (by yo61)** — toggles the UniFi switch LAG bonds by leader port |
 
 ## Key files (in the `flux-homelab` repo)
 

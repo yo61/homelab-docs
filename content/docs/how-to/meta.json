@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "rebuild-the-cluster",
+    "drain-a-node",
     "add-a-new-service"
   ]
 }

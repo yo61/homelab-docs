@@ -217,25 +217,23 @@ that can fail on its own.
 
 A wipe kills the old cluster before tns-csi can delete its volumes, so each old
 `pvc-*` survives on TrueNAS as four objects — a zvol plus an iSCSI extent, target,
-and target-extent association. They're inert (UUID names can't collide with the
-new cluster), so this is tidy-up, not a blocker — do it once the cluster is back
-and can say exactly what's in use.
+and target-extent link. They're inert (UUID names can't collide with the new
+cluster), so this is tidy-up, not a blocker — do it once the cluster is back.
+
+`scripts/iscsi-reclaim.py` (in the flux-homelab repo) finds datasets under
+`space/k8s/iscsi/volumes` that no live PV references and deletes each in dependency
+order (`targetextent → target → extent → dataset`) over the TrueNAS JSON-RPC API —
+no SSH, no root, no sudo. Dry-run by default; `--apply` deletes (with a confirm):
 
 ```bash
-# in-use zvols, from the cluster (all PVs, any phase)
-kubectl get pv -o json \
-  | jq -r '.items[] | select(.spec.csi.driver=="tns.csi.io") | .spec.csi.volumeHandle' \
-  | sort > /tmp/inuse-zvols.txt
-# every zvol on TrueNAS (read-only)
-ssh root@192.168.20.10 'zfs list -H -o name -t volume -r space/k8s/iscsi/volumes' | sort > /tmp/all-zvols.txt
-# orphans = on TrueNAS, not in use
-comm -13 /tmp/inuse-zvols.txt /tmp/all-zvols.txt
+# from a flux-homelab checkout; op on the HomeLab login
+# (unset OP_SERVICE_ACCOUNT_TOKEN first if you're in the project devshell)
+KEY='op://HomeLab/nas1 API key - robin-rebuild-cleanup/credential'
+TRUENAS_API_KEY=$(op read "$KEY") uv run scripts/iscsi-reclaim.py            # dry run: lists orphans
+TRUENAS_API_KEY=$(op read "$KEY") uv run scripts/iscsi-reclaim.py --apply    # delete (type 'yes')
 ```
 
-For each orphan, delete the iSCSI objects in dependency order through the TrueNAS
-UI (**Shares → Block (iSCSI)**): Associated Target, then Target, then Extent — then
-destroy the now-unreferenced zvol (`zfs destroy -nv …`; drop `-n` to apply). Re-run
-the diff to confirm it's empty.
+Re-run the dry run to confirm `orphans: 0`.
 
 ## Troubleshooting
 

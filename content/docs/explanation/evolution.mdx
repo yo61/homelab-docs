@@ -1,0 +1,38 @@
+---
+title: How this cluster evolved
+description: The problems hit and the choices made, as the homelab grew from bare metal to a self-converging GitOps cluster
+---
+
+This is a *learning cluster*. Its north-star is a zero-manual-intervention path
+from bare metal to a working Kubernetes cluster — and the interesting part is not
+where it landed but how it got there. What follows is the story as a set of
+themes, each framed as the **problem** that forced a change, the **choice** made,
+and the **trade-off** accepted.
+
+Read the timeline for the sequence; read the arcs for the reasoning.
+
+## Timeline at a glance
+
+- **early Jul** — [the founding stack is chosen](#the-seed): Cilium, OpenBao/ESO, Flux on Talos
+- **Jul 7–14** — [the bootstrap saga](#the-bootstrap-saga): getting bare metal to a healthy cluster with no manual steps
+- **~Jul 14** — [getting traffic in](#getting-traffic-in): services on `*.lab.yo61.net` via Cilium Gateway API
+- **Jul 15** — [declarative DNS](#declarative-dns) and [secrets without secrets in git](#secrets-without-secrets-in-git)
+- **~Jul 18** — [automating dependencies](#automating-dependencies): Renovate on a dedicated GitHub App
+- **Jul 20–21** — [Cilium goes day-0 → day-2](#cilium-day0-day2): a CNI that Flux can upgrade
+- **Jul 21** — [proving it](#the-rebuild): a full bare-metal rebuild with zero manual steps
+
+## The seed [#the-seed]
+
+## The bootstrap saga [#the-bootstrap-saga]
+
+## Getting traffic in [#getting-traffic-in]
+
+## Declarative DNS [#declarative-dns]
+
+## Secrets without secrets in git [#secrets-without-secrets-in-git]
+
+## Automating dependencies [#automating-dependencies]
+
+## Cilium: day-0 → day-2 [#cilium-day0-day2]
+
+## Proving it: the bare-metal rebuild [#the-rebuild]

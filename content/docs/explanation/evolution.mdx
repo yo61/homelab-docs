@@ -27,7 +27,7 @@ Read the timeline for the sequence; read the arcs for the reasoning.
 **Before the repo**
 
 - **~Jun 2026** — [choosing the metal](#the-metal): an arm64 plan pivots to x86
-- **pre-repo** — [the network and the PXE dead-end](#pxe): VLAN 20, and a bootloader too old for Talos
+- **pre-repo** — [the network and the PXE dead-end](#pxe): VLAN 20, and PXE blocked by bonded switch ports
 - **early Jul** — [Talos comes up](#talos): a 3-node HA control plane; k3s the road not taken
 - **pre-repo** — [the drift lesson](#the-drift-lesson): a vanished kubelet flag that made GitOps non-negotiable
 - **→ Jul 7** — [the storage saga](#the-storage-saga): democratic-csi → tns-csi → a custom image
@@ -70,16 +70,20 @@ nodes, and an LB pool all at pinned addresses. Firewall isolation had to be
 used instead. The lasting gotcha: `talosctl`/`kubectl` only work from a VLAN-20
 vantage point, or the firewall silently eats the traffic.
 
-**Choice:** then PXE-booting the nodes hit a wall. netboot.xyz (running as a
-TrueNAS app) bundles an **iPXE too old to hand a modern Talos kernel its
-initramfs** over UEFI — the nodes panic on an unmountable root, made worse by the
-E5's Realtek RTL8125 NICs. After a slow `sanboot`-the-ISO workaround, what actually
-shipped was a plain **USB-stick install**, with proper PXE deferred.
+**Choice:** then PXE-booting the nodes hit a wall — and the real cause took
+perseverance to find. It wasn't the bootloader and it wasn't the NICs: it was the
+**bonded switch ports**. Each node's two ports are a UniFi LACP bond, but a node in
+PXE/maintenance has no `bond0` and speaks no LACP, so the aggregated switch-port
+pair has no partner to negotiate with — the link never comes up to boot over. The
+solution was to **unbond the ports on the switch before PXE-booting the machines**,
+then restore aggregation afterward; no USB stick, no manual install ever entered
+the picture.
 
-**Trade-off:** a manual install step up front, accepted knowingly — and vindicated
-later, when the rebuild era got the nodes to **PXE straight to Talos maintenance
-mode** once a newer iPXE was in play. The dead-end was the old bootloader, exactly
-as predicted.
+**Trade-off:** a network subtlety that masqueraded as half a dozen other things
+before it was pinned down. But finding it is what made unattended PXE possible, and
+it set the **LAG ordering rule** that governs every rebuild since — aggregation off
+before re-imaging, reconciled back after (the same root issue reappears as a
+teardown [gotcha](/explanation/talos-rebuild-gotchas#lacp)).
 
 ## Talos comes up [#talos]
 

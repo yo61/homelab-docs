@@ -81,9 +81,12 @@ the picture.
 
 **Trade-off:** a network subtlety that masqueraded as half a dozen other things
 before it was pinned down. But finding it is what made unattended PXE possible, and
-it set the **LAG ordering rule** that governs every rebuild since — aggregation off
-before re-imaging, reconciled back after (the same root issue reappears as a
-teardown [gotcha](/explanation/talos-rebuild-gotchas#lacp)).
+it set the **LAG ordering rule** that governs every rebuild since: aggregation off
+before re-imaging, reconciled back after. That toggle was itself worth automating —
+it became [`unifictl`](https://github.com/yo61/unifictl), a purpose-built CLI for
+flipping the switch-port bonds on and off, rather than clicking through the UniFi
+UI (`unifictl set lag off/on --leader 17,19,21`). The same root issue reappears
+later as a teardown [gotcha](/explanation/talos-rebuild-gotchas#lacp).
 
 ## Talos comes up [#talos]
 

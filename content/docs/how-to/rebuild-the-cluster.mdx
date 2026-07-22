@@ -29,18 +29,14 @@ cd ~/code/github.com/yo61/flux-homelab
 git status --porcelain      # expect: clean tree
 git log origin/main..HEAD   # expect: nothing unpushed
 
-cd talos
-talhelper validate talconfig                 # "your talconfig is looking great!"
-talhelper genconfig                          # writes clusterconfig/*.yaml
-grep -h metal-installer clusterconfig/homelab-k8s-01.yaml   # schematic 3a33ec6…
-grep InitiatorName clusterconfig/homelab-k8s-01.yaml        # iqn.2026-07.net.yo61.lab:k8s-01
+# config renders + both drift guards (schematic, static IQN) + OpenBao/iSCSI reachable
+task preflight
 
-curl -s http://192.168.20.10:8200/v1/sys/seal-status | jq '{sealed, initialized}'  # sealed:false
-nc -zv 192.168.20.10 3260                     # TrueNAS iSCSI portal open
-for t in talhelper talosctl flux kubectl cilium helm prek op unifictl; do command -v "$t" >/dev/null && echo "ok $t" || echo "MISSING $t"; done
+# tooling present?
+for t in task talhelper talosctl flux kubectl cilium helm prek op uv unifictl; do command -v "$t" >/dev/null && echo "ok $t" || echo "MISSING $t"; done
 
 # Restore the Talos PKI bundle from 1Password (same PKI → trusts the running nodes)
-op read 'op://HomeLab/lab.yo61.net cluster bootstrap secrets/talsecret.yaml' --out-file talsecret.yaml && echo "talsecret restored"
+op read 'op://HomeLab/lab.yo61.net cluster bootstrap secrets/talsecret.yaml' --out-file talos/talsecret.yaml && echo "talsecret restored"
 ```
 
 <Callout type="info">
@@ -220,17 +216,15 @@ A wipe kills the old cluster before tns-csi can delete its volumes, so each old
 and target-extent link. They're inert (UUID names can't collide with the new
 cluster), so this is tidy-up, not a blocker — do it once the cluster is back.
 
-`scripts/iscsi-reclaim.py` (in the flux-homelab repo) finds datasets under
+`task reclaim-zvols` (in the flux-homelab repo) finds datasets under
 `space/k8s/iscsi/volumes` that no live PV references and deletes each in dependency
 order (`targetextent → target → extent → dataset`) over the TrueNAS JSON-RPC API —
-no SSH, no root, no sudo. Dry-run by default; `--apply` deletes (with a confirm):
+no SSH, no root, no sudo. It pulls the API key from 1Password for you. Dry-run by
+default; `-- --apply` deletes (with a `type 'yes'` confirm):
 
 ```bash
-# from a flux-homelab checkout; op on the HomeLab login
-# (unset OP_SERVICE_ACCOUNT_TOKEN first if you're in the project devshell)
-KEY='op://HomeLab/nas1 API key - robin-rebuild-cleanup/credential'
-TRUENAS_API_KEY=$(op read "$KEY") uv run scripts/iscsi-reclaim.py            # dry run: lists orphans
-TRUENAS_API_KEY=$(op read "$KEY") uv run scripts/iscsi-reclaim.py --apply    # delete (type 'yes')
+task reclaim-zvols              # dry run: lists orphans
+task reclaim-zvols -- --apply   # delete (type 'yes' to confirm)
 ```
 
 Re-run the dry run to confirm `orphans: 0`.

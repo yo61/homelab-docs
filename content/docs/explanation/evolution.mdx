@@ -1,0 +1,316 @@
+---
+title: How this cluster evolved
+description: The problems hit and the choices made, from a hardware shopping list to a self-converging GitOps cluster
+---
+
+This is a *learning cluster* first and a running cluster second. The point is to
+learn the Kubernetes landscape by owning every layer — so nearly every choice
+trades convenience for *"you had to understand it to make it work."* That framing
+is why some decisions look over-engineered for a homelab: Talos over k3s, Gateway
+API over Ingress, ESO + OpenBao over `kubectl create secret`, a custom-built CSI
+image over waiting for upstream.
+
+What follows is how it actually got there, told as a set of themes — each the
+**problem** that forced a change, the **choice** made, and the **trade-off**
+accepted. The story starts before the first commit: `git log` is the spine from
+2026-07-08 on, but the hardware pivot, the PXE saga, the Talos bring-up and the
+storage epic all predate the repo.
+
+Read the timeline for the sequence; read the arcs for the reasoning.
+
+> 🖊️ **Robin:** why did you start this project — what did you want to learn, and
+> why a self-hosted cluster rather than managed k8s? *(placeholder — your views
+> go here; this is the origin story git can't tell.)*
+
+## Timeline at a glance
+
+**Before the repo**
+
+- **~Jun 2026** — [choosing the metal](#the-metal): an arm64 plan pivots to x86
+- **pre-repo** — [the network and the PXE dead-end](#pxe): VLAN 20, and PXE blocked by bonded switch ports
+- **early Jul** — [Talos comes up](#talos): a 3-node HA control plane; k3s the road not taken
+- **pre-repo** — [the drift lesson](#the-drift-lesson): a vanished kubelet flag that made GitOps non-negotiable
+- **→ Jul 7** — [the storage saga](#the-storage-saga): democratic-csi → tns-csi → a custom image
+
+**The repo era**
+
+- **Jul 8** — [the repo is born](#the-seed): Flux, ESO/OpenBao, Cilium day-0
+- **Jul 8–14** — [Cilium eats the network stack](#cilium-consolidation): MetalLB and ingress-nginx, gone
+- **Jul 13–14** — [proving it](#first-rebuild): the first bare-metal rebuild
+- **Jul 14–15** — [going public](#going-public): `*.lab.yo61.net`, DNS and secrets, all declarative
+- **Jul 20** — [automating dependencies](#automating-dependencies): Renovate on a GitHub App
+- **Jul 21** — [Cilium day-0 → day-2](#cilium-day0-day2): a CNI Flux can upgrade, proven by a convergence rebuild
+- **Jul 22** — [ops ergonomics and the docs split](#ops-and-docs)
+
+## Choosing the metal [#the-metal]
+
+**Problem:** the goal was a low-power, quiet, 3-node cluster that lives at home and
+exists to *learn* Kubernetes hands-on — which set hard constraints (wattage, noise,
+a dedicated VLAN, ECC-backed ZFS storage) before a single board was bought.
+
+**Choice:** the original plan was **arm64** — Rockchip RK3588 boards — for the
+lowest wattage and an arm learning angle. A 2026 RK3588 supply crunch on top of a
+global RAM shortage made 16/32 GB boards scarce and overpriced, so the plan pivoted
+to reliably-stocked low-power **x86**: three **BOSGAME E5** mini PCs (Ryzen 3
+5300U, 16 GB, dual 2.5 GbE, ~£245 each). The ZFS storage box (a reused U-NAS
+NSC-810A chassis, ECC board) was specced but not built — storage runs off an
+existing TrueNAS host for now.
+
+**Trade-off:** gave up the arm64 angle and the absolute-lowest wattage for
+availability and dual 2.5 GbE. A forced choice, not a preference — the sort the
+learning goal cares about recording honestly.
+
+## The network and the PXE dead-end [#pxe]
+
+**Problem:** everything downstream depends on a fixed network plan — a dedicated
+**Homelab VLAN 20** on the UniFi UDM Pro, with the Talos API VIP, TrueNAS, the
+nodes, and an LB pool all at pinned addresses. Firewall isolation had to be
+*asymmetric* (Internal→Homelab allowed, Homelab→Internal blocked); the naive
+"Isolate Network" toggle blocks both directions, so two directional policies were
+used instead. The lasting gotcha: `talosctl`/`kubectl` only work from a VLAN-20
+vantage point, or the firewall silently eats the traffic.
+
+**Choice:** then PXE-booting the nodes hit a wall — and the real cause took
+perseverance to find. It wasn't the bootloader and it wasn't the NICs: it was the
+**bonded switch ports**. Each node's two ports are a UniFi LACP bond, but a node in
+PXE/maintenance has no `bond0` and speaks no LACP, so the aggregated switch-port
+pair has no partner to negotiate with — the link never comes up to boot over. The
+solution was to **unbond the ports on the switch before PXE-booting the machines**,
+then restore aggregation afterward; no USB stick, no manual install ever entered
+the picture.
+
+**Trade-off:** a network subtlety that masqueraded as half a dozen other things
+before it was pinned down. But finding it is what made unattended PXE possible, and
+it set the **LAG ordering rule** that governs every rebuild since: aggregation off
+before re-imaging, reconciled back after. That toggle was itself worth automating —
+it became [`unifictl`](https://github.com/yo61/unifictl), a purpose-built CLI for
+flipping the switch-port bonds on and off, rather than clicking through the UniFi
+UI (`unifictl set lag off/on --leader 17,19,21`). The same root issue reappears
+later as a teardown [gotcha](/explanation/talos-rebuild-gotchas#lacp).
+
+## Talos comes up [#talos]
+
+**Problem:** a declarative learning cluster needs nodes with no pets and no drift —
+no SSH, no hand-edited files, a config you can reapply.
+
+**Choice:** **Talos Linux** — immutable, API-driven, embedded-etcd — on a 3-node HA
+control plane running Kubernetes v1.36.2. **k3s was the road not taken**: a full
+`k3s-cluster-build-guide` was written and deliberately *not* used, because the
+no-SSH immutable model is the whole point. Several settings each came from a
+specific failure: `allowSchedulingOnControlPlanes: true` (an all-control-plane
+cluster is unschedulable without it — *"this bit us"*); hostnames via a
+`HostnameConfig` document (Talos 1.13 moved hostname out of `machine.network` and
+now errors on the old field); and system extensions pinned via **Image Factory** to
+a schematic ID.
+
+**Trade-off:** a steeper learning curve than k3s, and every Talos upgrade must
+**re-include the extensions** — the schematic ID is the reusable handle for that.
+In exchange: a node you can wipe and rebuild from config alone.
+
+## The drift lesson: why GitOps [#the-drift-lesson]
+
+**Problem:** the add-ons went on imperatively at first — metrics-server, Headlamp,
+the external-snapshotter CRDs. metrics-server on Talos needs a specific chain:
+kubelet `rotate-server-certificates` plus the kubelet-serving-cert-approver, then
+real TLS (not `--kubelet-insecure-tls`). At one point **that kubelet flag drifted
+away** and metrics-server broke.
+
+**Choice:** that single incident is the origin story for the entire GitOps posture.
+Config that lives only as a runtime patch will silently vanish — so the rule became
+*if it isn't in git and reconciled, it doesn't exist.* The test written in direct
+response still governs the project: **"could you `talosctl reset` and rebuild an
+identical cluster from the repo alone?"**
+
+**Trade-off:** more up-front rigour (nothing clicked into place, everything
+committed) for the guarantee that the cluster's state is knowable and
+reproducible. Everything after this point inherits that rule. See
+[why GitOps](/explanation/why-gitops) for the fuller argument.
+
+## The storage saga [#the-storage-saga]
+
+**Problem:** the cluster needed dynamic, ZFS-backed **block** storage — one PVC =
+one TrueNAS zvol over iSCSI. (iSCSI over NFS partly *because* it needs the
+`iscsi-tools` Talos extension — a deliberate excuse to learn Talos upgrades.) This
+is the longest single thread in the project, and its best problem→choice→trade-off
+material.
+
+**Choice, in two blockers:**
+
+- **democratic-csi is dead on modern TrueNAS.** Its controller crash-looped calling
+  the **legacy REST API**, which TrueNAS deprecated in SCALE 25.04 and *removed* in
+  26.x for a JSON-RPC-over-WebSocket API. No config fixes it — so the move was to
+  **`tns-csi`** (WebSocket-native).
+- **The `iscsiadm` version mismatch.** tns-csi still failed: the driver image ships
+  `iscsiadm` **2.1.10**, but the node's stack (kernel + `iscsid` from the extension)
+  is **2.1.11**, and the container's 2.1.10 **hangs in local IPC** with `iscsid` —
+  before any TCP to TrueNAS — holding the open-iscsi lock. Isolated by packet
+  capture and an A/B test (host binary = success, container = hang), which
+  *corrected* an earlier wrong hypothesis that a TrueNAS rollback would help.
+
+The resolution (2026-07-07): a **custom driver image**,
+`ghcr.io/yo61/tns-csi:…-oiscsi2.1.11` — stock tns-csi plus an open-iscsi 2.1.11
+overlay replacing the broken `iscsiadm` — built and pushed via GitHub Actions.
+
+**Trade-off:** now maintaining a fork image, with corroboration posted upstream
+(fenio/tns-csi#194) so the fork can be dropped once upstream skips discovery or
+bumps `iscsiadm`. A lot of yak-shaving — but it produced the hardest-won Talos/iSCSI
+knowledge in the whole build.
+
+> 🖊️ **Robin:** of the whole storage saga, what actually cost the most — proving
+> the `iscsiadm` IPC hang, or building the overlay image? *(placeholder — fill or
+> delete.)*
+
+## The repo is born [#the-seed]
+
+**Problem:** everything so far was built imperatively. To honour the drift lesson,
+the add-on layer had to move into a git repo that Flux reconciles — the first
+commit, 2026-07-08: *"flux homelab: Cilium + OpenBao/ESO."*
+
+**Choice:** several foundations, each with a reason. Talos config moved to
+**talhelper** (`talconfig.yaml` + patches), replacing a hand-maintained file with
+the secret bundle gitignored. Secrets flow through **External Secrets Operator +
+OpenBao**, *not* SOPS-in-git — a firm rule that git holds only *references*, never
+secret material even encrypted (ciphertext in history is forever). And **Cilium is
+day-0** via Talos `inlineManifests`, because the CNI must exist before Flux can run.
+The repo settled in over the same day with fix-ups that each fixed a real break: a
+duplicate PodSecurity block that **crash-looped the apiserver**
+([details](/explanation/talos-rebuild-gotchas#podsecurity)); privileged PodSecurity
+for node-exporter ([details](/explanation/talos-rebuild-gotchas#node-exporter-pss));
+and a **static iSCSI IQN** so storage survives node wipes
+([details](/explanation/talos-rebuild-gotchas#iscsi-iqn)).
+
+**Trade-off:** one irreducible out-of-band secret remains — ESO's own AppRole
+secret-id, injected at bootstrap — the single seam in an otherwise
+secrets-free-in-git design.
+
+## Cilium eats the network stack [#cilium-consolidation]
+
+**Problem:** the original networking plan was a conventional **MetalLB →
+ingress-nginx → cert-manager** stack. Two things made it the wrong plan before it
+ever shipped: it's several moving parts to learn and upgrade, and **ingress-nginx
+was archived in March 2026** — no features, no fixes, no CVE patches (the "NGINX
+Rift" heap-overflow will never be patched on archived builds).
+
+**Choice:** collapse the stack onto **Cilium**, which already had to be present as
+the CNI. It now owns four jobs that were four components:
+
+| Cilium feature | Replaces |
+|---|---|
+| CNI | flannel |
+| `kubeProxyReplacement` (eBPF) | kube-proxy — no iptables scaling cliff |
+| LB-IPAM + L2 announcements (`CiliumLoadBalancerIPPool`, ARP on `bond0`) | **MetalLB** |
+| **Gateway API** | **ingress-nginx** |
+
+The Ingress *API* is fine, but the controller the plan assumed is dead; Gateway API
+brings typed CRDs and a role split (operator owns the `Gateway`, app owners write
+`HTTPRoute`s) that mirrors how the work actually divides. The wrinkle:
+Cilium *core* is day-0, but Flux owns the Gateway API runtime objects — the
+`GatewayClass` specifically **can't** come from the chart (it gates on
+`.Capabilities.APIVersions`, and the inline manifest is templated before the CRDs
+exist), so Flux manages it directly (#16), alongside cert-manager Gateway support
+(#17) and the CRDs installed at day-0 via `extraManifests` (#18).
+
+**Trade-off:** Cilium-specific CRDs and the day-0 GatewayClass gotcha to understand
+— in exchange for one component instead of four, and no dependence on an abandoned
+controller.
+
+> 🖊️ **Robin:** the artifacts give the *technical* reasons (one component, eBPF,
+> nginx archived) — anything to add on how you actually decided to bet the whole
+> network stack on Cilium? *(placeholder — fill or delete.)*
+
+## Proving it: the first rebuild [#first-rebuild]
+
+**Problem:** "you could rebuild from the repo alone" was still a *claim*. Config
+that has only ever been edited in place can hide manual steps nobody remembers
+taking — the drift lesson in a larger, scarier form.
+
+**Choice:** actually tear the cluster down and rebuild it from bare metal
+(#19–#22), turning the inventory drift-test into a real event. It paid off
+immediately: the teardown got reworked so `reset` no longer hangs and the nodes
+**PXE straight to maintenance mode** (#21) — finally closing the old PXE saga — and
+it surfaced the LAG ordering rule (bonds can't PXE with no LACP partner, so
+aggregation drops out-of-band before re-imaging and reconciles back after) and the
+orphaned-zvol cleanup a wipe leaves behind (#22).
+The teardown ordering is now documented as a
+[gotcha](/explanation/talos-rebuild-gotchas#lacp).
+
+**Trade-off:** a rebuild is disruptive and there's no cheap dry-run of "does the
+whole thing come back from nothing" — but it's the only way to convert *should be
+reproducible* into *is reproducible*, and it exposed edge cases a never-rebuilt
+cluster hides.
+
+## Going public [#going-public]
+
+**Problem:** with the Gateway up, services needed to be reachable — Grafana,
+Prometheus, Alertmanager, Hubble — on `*.lab.yo61.net`, with DNS and TLS following
+automatically rather than by hand.
+
+**Choice:** the payoff of the Cilium consolidation lands here — exposing an app is
+now *one `HTTPRoute`* (#23, #24), no new LB IP, TLS terminated at a `Gateway` whose
+IP is pinned so the wildcard DNS record survives rebuilds. Two more pieces close the
+loop declaratively: **external-dns → UniFi** writes per-host A records off the
+HTTPRoutes (#26), and **Grafana's admin credentials come from OpenBao via ESO**
+(#25) — "no secrets in git" applied to a real workload. Both external-dns fixes are
+real gotchas worth remembering: the webhook image tag is `0.10.9` with **no `v`
+prefix** (#27), and `UNIFI_SKIP_TLS_VERIFY` must be set `"false"` explicitly because
+the webhook defaults to skipping verification (#28).
+
+**Trade-off:** a little webhook-specific fiddliness — for a pipeline where adding a
+service never again means touching DNS or certificates.
+
+## Automating dependencies [#automating-dependencies]
+
+**Problem:** a cluster pinned to exact versions rots quietly unless something keeps
+watch — but the person doing the bumps by hand is a bottleneck and a blind spot for
+CVEs.
+
+**Choice:** **Renovate** (#30), running as a dedicated **`yo61-renovate` GitHub
+App** rather than a personal token — scoped, rotatable, and not tied to a human
+(later switched to the App **client-id** over the deprecated app-id, #32, and
+granted vulnerability-alert read, #33). One thing Renovate *can't* do alone: Cilium's
+version pin lives in a comment and the running manifest is a day-0 inline render, so
+Renovate can bump the pin but not re-`helm template` the output.
+
+**Trade-off:** because there's no CI test gate and Flux auto-applies on merge,
+**automerge starts OFF** — every PR is a deliberate human merge. Automation with a
+hand on the brake.
+
+## Cilium: day-0 → day-2 [#cilium-day0-day2]
+
+**Problem:** Cilium is the CNI and replaces kube-proxy, so there is *no pod
+networking until Cilium is up* — which means Flux can't be what installs it. The
+day-0 answer is a Talos **inline manifest**, applied once at bootstrap and never
+reconciled. So how do you *upgrade* a CNI you welded into the machine config?
+
+**Choice:** two layers reading one set of values. A day-0 **inline floor** that
+just brings networking up far enough to be adopted, and a day-2 **Flux
+HelmRelease** that takes ownership and drives every upgrade after (#39–41). From
+then on a Cilium bump is an ordinary Renovate PR — no re-render. Re-rendering the
+rare floor surfaced a smaller decision: the workstation had moved to **helm 4**,
+whose output diverges cosmetically from the helm-3 baseline; rather than pin an old
+helm, the choice (recorded as an ADR in the cluster repo) was to render with helm 4.
+Convergence was then *tested* — the floor dropped one patch below target (1.19.5 vs
+1.19.6) to prove Flux rolls the cluster forward on a real rebuild (#42–#45). The
+full mechanics are their own page:
+[Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2).
+
+**Trade-off:** two independently-pinned versions — floor and target — to keep
+straight, and every future re-render must use helm 4. In exchange the CNI stops
+being a special case and becomes just another GitOps-managed release, proven to
+converge 1.19.5 → 1.19.6 live with the cluster healthy throughout.
+
+## Ops ergonomics and the docs split [#ops-and-docs]
+
+**Problem:** by now the repeatable operations (preflight checks, re-rendering
+Cilium, reclaiming orphaned zvols) lived in people's heads and scattered notes, and
+the growing docs were weighing down a repo meant to be code + config.
+
+**Choice:** a **`Taskfile`** became the ops index — `task --list` surfaces
+`preflight`, `reclaim-zvols`, `cilium:render` — backed by an `iscsi-reclaim` script
+that cleans orphaned zvols over the TrueNAS SCALE 26 JSON-RPC API (#47). Then the
+docs were **split out** to a separate, public, Diátaxis-organized `homelab-docs`
+repo (#48), leaving `flux-homelab` as code + config with a pointer.
+
+**Trade-off:** two repos to keep in step — for a lean private cluster repo and docs
+that can be public and properly structured. *(It's also why this very page lives in
+`homelab-docs` rather than alongside the code.)*

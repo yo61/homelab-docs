@@ -29,3 +29,8 @@ updates:
     groups:
       npm-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # TypeScript 7.x is the native (Go) compiler rewrite; Next.js/Fumadocs tooling
+      # doesn't support it yet (the build can't detect it). Revisit when they do.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]

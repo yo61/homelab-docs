@@ -25,6 +25,45 @@ Read the timeline for the sequence; read the arcs for the reasoning.
 
 ## The bootstrap saga [#the-bootstrap-saga]
 
+**Problem:** three bare-metal nodes need to become a healthy Kubernetes cluster
+with no one at a keyboard — PXE-boot into Talos, apply a config, and let GitOps
+take it from there. The first real bring-ups turned that ambition into a list of
+things that silently break.
+
+Commissioning came first: each node is a two-port UniFi **LACP bond**, and getting
+them to PXE-boot over an aggregated link — then survive maintenance mode — set the
+pattern for everything after. The hardest lessons were the ones with no log until
+it was too late:
+
+- The API server **crash-looped on first boot** because the config re-declared a
+  PodSecurity block Talos already ships; the strategic-merge *appended* to the
+  exemption list and `kube-system` appeared twice. The fix was to stop pinning it
+  at all — [details](/explanation/talos-rebuild-gotchas#podsecurity).
+- iSCSI volumes wouldn't mount after any wipe, because Talos generates a **new
+  random initiator IQN** each time and TrueNAS hides targets from unknown
+  initiators. The answer was a *static* per-node IQN written into the machine
+  config — [details](/explanation/talos-rebuild-gotchas#iscsi-iqn).
+- `node-exporter` sat 0-ready: a host-level DaemonSet exceeds the cluster-default
+  baseline Pod Security Standard, so its namespace has to opt into `privileged`
+  — [details](/explanation/talos-rebuild-gotchas#node-exporter-pss).
+
+**Choice:** fix every one of these *at the source* — in the Talos machine config
+or the GitOps tree — never as a manual post-boot step. Even Flux itself is
+bootstrapped declaratively, authenticating as a GitHub App rather than a personal
+token. And teardown got the same treatment: bonds must come **off** before nodes
+reset, but not before, since the bond carries the very IP the reset travels over —
+so the reset fires at all three static IPs first, *then* aggregation drops
+([ordering](/explanation/talos-rebuild-gotchas#lacp)).
+
+**Trade-off:** the machine config carries knowledge that isn't obvious from any
+single symptom — static IQNs, a deliberately *absent* PodSecurity block, a
+privileged namespace label. It works with zero hands, but only because the pain
+was paid down into config once. That tax is documented in the
+[rebuild gotchas](/explanation/talos-rebuild-gotchas) so it stays paid.
+
+> 🖊️ **Robin:** which of these actually cost you the most time — the apiserver
+> crash-loop, or the static-IQN discovery? *(placeholder — fill or delete)*
+
 ## Getting traffic in [#getting-traffic-in]
 
 ## Declarative DNS [#declarative-dns]
@@ -35,4 +74,56 @@ Read the timeline for the sequence; read the arcs for the reasoning.
 
 ## Cilium: day-0 → day-2 [#cilium-day0-day2]
 
+**Problem:** Cilium is the CNI and replaces kube-proxy, so there is *no pod
+networking until Cilium is up*. Flux needs pod networking to run — which means
+Flux can't be what installs the CNI. The declarative answer on Talos is an
+**inline manifest** baked into the machine config, applied at bootstrap over the
+host network. But an inline manifest is frozen at boot: Talos applies it once and
+never reconciles it. How do you *upgrade* a CNI you welded into the machine
+config?
+
+**Choice:** two layers reading one set of values. A day-0 **inline floor** whose
+only job is to bring networking up far enough to be adopted, and a day-2 **Flux
+HelmRelease** that takes ownership of those resources and owns every upgrade
+thereafter. From then on a Cilium bump is an ordinary Renovate PR against the
+HelmRelease — no `helm template`, no re-render. The full mechanics are their own
+page: [Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2).
+
+Re-rendering the rare inline floor surfaced a smaller choice. The render is a
+manual `helm template`, and the workstation had moved to **helm 4**, whose output
+diverges cosmetically from the helm-3 baseline (blank lines, three dropped
+empty-string keys). Rather than pin an old helm just to preserve formatting, the
+decision (recorded as an ADR in the cluster repo) was to render with helm 4 — it's
+the installed default and functionally identical. Convergence was then *tested*
+deliberately: the floor was dropped one patch below the target (1.19.5 vs 1.19.6)
+to prove Flux rolls the running cluster forward, then restored.
+
+**Trade-off:** two independently-pinned versions — floor and target — to keep
+straight, and every future re-render must use helm 4 to avoid re-introducing the
+churn. In exchange, the CNI stops being a special case and becomes just another
+GitOps-managed release.
+
 ## Proving it: the bare-metal rebuild [#the-rebuild]
+
+**Problem:** a learning cluster's north-star — *zero manual intervention from bare
+metal to a working cluster* — is only a claim until something forces it to be
+true. Config that has only ever been edited in place can hide a dozen manual steps
+nobody remembers taking.
+
+**Choice:** actually do it. On 2026-07-21 the cluster was wiped and rebuilt from
+bare metal end to end: nodes PXE'd into maintenance, the machine config applied,
+Cilium came up from the day-0 floor, and the nodes went `Ready` — with no manual
+`kubectl`. Then, with the inline floor deliberately one patch behind, Flux adopted
+the running Cilium and **converged it 1.19.5 → 1.19.6 live**, the cluster staying
+healthy throughout. The two-layer design wasn't just argued; it was
+[observed converging on a real rebuild](/explanation/cilium-day0-day2).
+
+The rebuild also earned its keep by exposing operational toil worth automating —
+the coda to this whole story. A `Taskfile` now fronts the repeatable steps
+(`preflight`, `reclaim-zvols`, `cilium:render`), and an `iscsi-reclaim` script
+cleans the orphaned zvols a wipe leaves behind, over the TrueNAS SCALE JSON-RPC
+API.
+
+**Trade-off:** proving it costs a real teardown — there's no cheap dry-run of "does
+the whole thing come back from nothing." But the payoff is a bring-up you *trust*,
+plus tooling that turns the next rebuild from an adventure into a checklist.

@@ -44,7 +44,9 @@ the patch).
 
 ## Storage and secrets
 
-- **NAS** `nas1.lab.yo61.net` (`192.168.20.10`) — TrueNAS SCALE 26.0.0-BETA.2, pool
+- **NAS** `nas1`, dual-homed — `nas1.lab.yo61.net` (`192.168.20.10`, homelab network;
+  iSCSI + OpenBao) and `nas1.home.yo61.net` (`192.168.1.10`, default network). TrueNAS
+  SCALE 26.0.0-BETA.2, pool
   `space`, iSCSI on.
 - **OpenBao** runs on the NAS at `http://192.168.20.10:8200` (the secret store ESO
   reads); must be **unsealed** for ESO to sync.

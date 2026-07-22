@@ -29,23 +29,26 @@ cd ~/code/github.com/yo61/flux-homelab
 git status --porcelain      # expect: clean tree
 git log origin/main..HEAD   # expect: nothing unpushed
 
-cd talos
-talhelper validate talconfig                 # "your talconfig is looking great!"
-talhelper genconfig                          # writes clusterconfig/*.yaml
-grep -h metal-installer clusterconfig/homelab-k8s-01.yaml   # schematic 3a33ec6…
-grep InitiatorName clusterconfig/homelab-k8s-01.yaml        # iqn.2026-07.net.yo61.lab:k8s-01
+# config renders + both drift guards (schematic, static IQN) + OpenBao/iSCSI reachable
+task preflight
 
-curl -s http://192.168.20.10:8200/v1/sys/seal-status | jq '{sealed, initialized}'  # sealed:false
-test -f talsecret.yaml && echo present       # restored from 1Password
-nc -zv 192.168.20.10 3260                     # TrueNAS iSCSI portal open
-for t in talhelper talosctl flux kubectl cilium helm prek unifictl; do command -v "$t" >/dev/null && echo "ok $t" || echo "MISSING $t"; done
+# tooling present?
+for t in task talhelper talosctl flux kubectl cilium helm prek op uv unifictl; do command -v "$t" >/dev/null && echo "ok $t" || echo "MISSING $t"; done
+
+# Restore the Talos PKI bundle from 1Password (same PKI → trusts the running nodes)
+op read 'op://HomeLab/lab.yo61.net cluster bootstrap secrets/talsecret.yaml' --out-file talos/talsecret.yaml && echo "talsecret restored"
 ```
 
-Also have to hand (manual): the Flux GitHub App creds (numeric **App ID**,
-Installation ID, `.pem` from OpenBao) and ESO's **SECRET_ID**; confirm
-netboot.xyz is in place; and the TrueNAS Allowed Initiators list is exactly the
-three static IQNs. Restore the **same** `talsecret.yaml` — same PKI, so it can
-reset the running nodes and reproduce the trusted `talosconfig`.
+<Callout type="info">
+  These steps pull secrets from 1Password with `op`, so sign in to the account
+  holding the **`HomeLab`** vault (1Password desktop-app integration). In the
+  project devshell, run `unset OP_SERVICE_ACCOUNT_TOKEN` first — it's scoped to a
+  different vault and shadows your login.
+</Callout>
+
+The GitHub App creds and ESO `SECRET_ID` are pulled from 1Password in Phase 3.
+Still manual: confirm netboot.xyz is in place, and the TrueNAS **Allowed
+Initiators** list is exactly the three static IQNs.
 
 ## Phase 1 — Teardown
 
@@ -135,14 +138,20 @@ flux check --pre
 helm install flux-operator oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
   --namespace flux-system --create-namespace
 
-# First out-of-band secret: the GitHub App key (NUMERIC App ID, .pem from OpenBao)
-flux create secret githubapp flux-system \
-  --app-id=<NUMERIC_APP_ID> --app-installation-id=<INSTALLATION_ID> \
-  --app-private-key=./flux-homelab-app.private-key.pem
+# Rebuild secrets come straight from 1Password (HomeLab vault) — nothing touches
+# disk or shell history. `unset OP_SERVICE_ACCOUNT_TOKEN` first if in the devshell.
+BOOT='op://HomeLab/lab.yo61.net cluster bootstrap secrets'
 
-# Second out-of-band secret: ESO's AppRole SECRET_ID (never commit or echo)
+# First out-of-band secret: the GitHub App key (numeric App ID + .pem)
+flux create secret githubapp flux-system \
+  --app-id="$(op read "$BOOT/flux-homelab-reconciler app/App ID")" \
+  --app-installation-id="$(op read "$BOOT/flux-homelab-reconciler app/Installation ID")" \
+  --app-private-key=<(op read "$BOOT/flux-homelab-reconciler.2026-07-08.private-key.pem")
+
+# Second out-of-band secret: ESO's AppRole SECRET_ID
 kubectl create namespace external-secrets 2>/dev/null || true
-kubectl -n external-secrets create secret generic openbao-approle --from-literal=secret-id='<SECRET_ID>'
+kubectl -n external-secrets create secret generic openbao-approle \
+  --from-literal=secret-id="$(op read "$BOOT/OpenBao/Secret ID")"
 
 # Apply the FluxInstance (this is what makes the operator deploy the controllers)
 kubectl apply -f - <<'EOF'
@@ -204,25 +213,21 @@ that can fail on its own.
 
 A wipe kills the old cluster before tns-csi can delete its volumes, so each old
 `pvc-*` survives on TrueNAS as four objects — a zvol plus an iSCSI extent, target,
-and target-extent association. They're inert (UUID names can't collide with the
-new cluster), so this is tidy-up, not a blocker — do it once the cluster is back
-and can say exactly what's in use.
+and target-extent link. They're inert (UUID names can't collide with the new
+cluster), so this is tidy-up, not a blocker — do it once the cluster is back.
+
+`task reclaim-zvols` (in the flux-homelab repo) finds datasets under
+`space/k8s/iscsi/volumes` that no live PV references and deletes each in dependency
+order (`targetextent → target → extent → dataset`) over the TrueNAS JSON-RPC API —
+no SSH, no root, no sudo. It pulls the API key from 1Password for you. Dry-run by
+default; `-- --apply` deletes (with a `type 'yes'` confirm):
 
 ```bash
-# in-use zvols, from the cluster (all PVs, any phase)
-kubectl get pv -o json \
-  | jq -r '.items[] | select(.spec.csi.driver=="tns.csi.io") | .spec.csi.volumeHandle' \
-  | sort > /tmp/inuse-zvols.txt
-# every zvol on TrueNAS (read-only)
-ssh root@192.168.20.10 'zfs list -H -o name -t volume -r space/k8s/iscsi/volumes' | sort > /tmp/all-zvols.txt
-# orphans = on TrueNAS, not in use
-comm -13 /tmp/inuse-zvols.txt /tmp/all-zvols.txt
+task reclaim-zvols              # dry run: lists orphans
+task reclaim-zvols -- --apply   # delete (type 'yes' to confirm)
 ```
 
-For each orphan, delete the iSCSI objects in dependency order through the TrueNAS
-UI (**Shares → Block (iSCSI)**): Associated Target, then Target, then Extent — then
-destroy the now-unreferenced zvol (`zfs destroy -nv …`; drop `-n` to apply). Re-run
-the diff to confirm it's empty.
+Re-run the dry run to confirm `orphans: 0`.
 
 ## Troubleshooting
 

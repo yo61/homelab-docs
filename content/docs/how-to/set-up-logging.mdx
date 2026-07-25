@@ -45,9 +45,25 @@ Community MinIO was removed from the TrueNAS catalog (MinIO CE went source-only)
   ```
 
 - **Bucket + key**: in the AIStor console, create a bucket **`loki`** and an access
-  key scoped to it (attach a policy allowing `s3:*` on `arn:aws:s3:::loki` and
-  `.../loki/*`). Store the key in 1Password (`op://Private/aistor credentials for
-  Loki bucket on nas1`).
+  key scoped to it (attach the policy below, allowing `s3:*` on the `loki` bucket).
+  Store the key in 1Password (`op://Private/aistor credentials for Loki bucket on
+  nas1`).
+
+  ```json title="loki bucket policy"
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["s3:*"],
+        "Resource": [
+          "arn:aws:s3:::loki",
+          "arn:aws:s3:::loki/*"
+        ]
+      }
+    ]
+  }
+  ```
 
 The S3 API endpoint is **`https://nas1.lab.yo61.net:30320`** (valid cert, so Loki
 uses `insecure: false`). Like the iSCSI StorageClass, AIStor is a standing TrueNAS

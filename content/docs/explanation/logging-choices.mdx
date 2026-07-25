@@ -1,0 +1,97 @@
+---
+title: Logging design choices
+description: Why the logging stack looks the way it does — and the alternatives rejected
+---
+
+The [logging how-to](/how-to/set-up-logging) covers *how* to run it. This page
+covers *why* — the decisions made while building it, and what was considered and
+dropped. The through-line: run it the way production does, **right-sized** for a
+3-node homelab rather than cargo-culting scale that isn't there.
+
+## Loki + Vector, next to the metrics
+
+The cluster already had Prometheus + Grafana. Logs are the second observability
+pillar, and Grafana is the same UI for both — so **Loki** (logs) sits beside
+Prometheus, and you can pivot from a spiking metric straight to a pod's logs. No
+separate log UI (Kibana et al.) to run or learn.
+
+## Loki topology: HA Monolithic, not SSD or microservices
+
+Loki has three deployment modes. The choice was **HA Monolithic** (3 replicas of one
+binary, sharing a hash ring + object store):
+
+- **Simple Scalable (SSD)** was the first instinct and is what Grafana long
+  recommended — but it's **deprecated and removed in Loki 4.0**. The chart already
+  defaults away from it. Building on a deprecated topology made no sense.
+- **Microservices / Distributed** is the "most production" shape, but its entire
+  purpose is independent horizontal scaling of ~8 components. At homelab volume, on
+  3 already-loaded nodes, you'd run 15–20 idle pods and *never exercise* the
+  property that justifies them — you'd learn the wiring diagram, not the dynamics.
+  Migrating Monolithic → Distributed is itself a documented exercise, so choosing
+  Monolithic **defers** that learning without foreclosing it.
+
+HA Monolithic keeps ring replication (`replication_factor: 3`, so an ingested log
+survives a node dying pre-flush) with the fewest moving parts and no removal cliff.
+
+## Object store: AIStor on TrueNAS, off-cluster
+
+Loki's load-bearing dependency is S3-compatible storage. It lives on the **TrueNAS
+box, not the cluster**:
+
+- **Not a new dependency class** — TrueNAS already backs every PVC via the iSCSI
+  StorageClass. "TrueNAS exists and is configured" was always the boundary.
+- **Storage separated from compute** is the production-correct instinct, with a
+  homelab payoff: logs **survive a full cluster teardown**. For a cluster whose
+  purpose is being rebuilt, keeping the last rebuild's logs is real.
+
+The engine choice was forced by a moving target: **community MinIO was removed from
+the TrueNAS catalog** (MinIO CE went source-only). Its successor **AIStor Free** is
+MinIO-compatible and homelab-licensed, but the migration surfaced real friction —
+it's account-gated (a SUBNET license) and needs a **separate proprietary client**
+(the community `mc` can't install the license). OSS alternatives (Garage,
+SeaweedFS) were weighed; AIStor won on lowest-friction TrueNAS-native install and
+MinIO compatibility, accepting the proprietary-but-free trade.
+
+## Collector: Vector (one agent, both jobs)
+
+**Vector** as a single per-node DaemonSet does *both* pipelines: `kubernetes_logs`
+for pod logs and a TCP `socket` source for the Talos host stream.
+
+- **Promtail** — deprecated, merged into Alloy. Off the table.
+- **Alloy** (Grafana's agent) is great at pod logs, but has no first-class receiver
+  for Talos's raw JSON-over-TCP. It would have meant *two* agents.
+- **Vector** speaks both natively, so one collector covers everything.
+
+## Talos host logs: the parts that surprised us
+
+"All logs" meant Talos host logs too, which is where the design got interesting:
+
+- **Two Talos configs, not one.** `machine.logging` ships **service** logs only
+  (machined, kubelet, containerd). **Kernel** logs need a *separate* `KmsgLogConfig`
+  document. The common one-liner silently omits kernel logs.
+- **ClusterIP, not hostPort.** The elegant idea was Talos → `127.0.0.1:6050` → a
+  node-local Vector pod via `hostPort`. But Cilium runs its BPF datapath on `bond0`
+  with `enable-host-port` unset, so a **loopback hostPort would be a silent black
+  hole**. What *does* work: Cilium's socket-LB reported `Coverage: Full`, meaning
+  the Talos host netns can reach a **ClusterIP** and Cilium routes it to a pod. So
+  the Talos sink targets a **pinned ClusterIP** (`10.96.0.50`) — fixed because the
+  host can't resolve cluster DNS. The spike that found this saved building on sand.
+
+## Right-sizing and other calls
+
+- **Single-tenant** (`auth_enabled: false`) — multi-tenancy would force an
+  `X-Scope-OrgID` header on every Grafana query and Vector push for zero benefit to
+  one user.
+- **No memcached caches, no canary DaemonSet** — chart defaults that add pods a
+  homelog-volume cluster doesn't need.
+- **30-day retention** via the compactor — cheap on object storage, one line to
+  change.
+- **Secrets via OpenBao → ESO** — the cluster's existing pattern, reused unchanged;
+  OpenBao persists off-cluster, so credentials survive rebuilds.
+
+## Known limitation
+
+Talos log JSON carries `talos-service` and `talos-level` but **no node identity**;
+the load-balanced ClusterIP means a Talos line can't be cleanly attributed to a
+specific node. A per-node `extraTags` fix covers service logs but not kernel logs.
+Filed as a follow-up — an honest gap, not a hidden one.

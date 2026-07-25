@@ -50,6 +50,14 @@ The GitHub App creds and ESO `SECRET_ID` are pulled from 1Password in Phase 3.
 Still manual: confirm netboot.xyz is in place, and the TrueNAS **Allowed
 Initiators** list is exactly the three static IQNs.
 
+<Callout type="info">
+  **Logging** adds one standing TrueNAS dependency: the **AIStor (S3)** app must be
+  running with the `loki` bucket and key (like the iSCSI StorageClass, it survives
+  rebuilds). Its credentials already live in OpenBao (`kv/loki-s3`), which also
+  survives, so a rebuild needs no logging-specific secret step. See
+  [Set up logging](/how-to/set-up-logging) for first-time setup.
+</Callout>
+
 ## Phase 1 — Teardown
 
 <Callout type="warn">Destructive: this wipes all three nodes.</Callout>

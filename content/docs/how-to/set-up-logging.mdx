@@ -86,7 +86,7 @@ and `enable-host-port` is unset.)
 
 In Grafana → Explore → Loki:
 
-```logql
+```text
 {namespace="kube-system"}                       # system + control-plane pod logs
 {source="kubernetes", namespace="lastlight"}    # a workload
 {source="talos"}                                # Talos service + kernel logs

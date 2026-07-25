@@ -4,6 +4,7 @@
     "index",
     "rebuild-the-cluster",
     "drain-a-node",
-    "add-a-new-service"
+    "add-a-new-service",
+    "set-up-logging"
   ]
 }

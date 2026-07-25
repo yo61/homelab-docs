@@ -1,0 +1,103 @@
+---
+title: Set up logging
+description: Loki + Vector cluster logging, and the out-of-band pieces a rebuild needs
+---
+
+Cluster logging captures **pod logs** (every namespace, including control-plane and
+system pods) and **Talos host logs** (service + kernel), into [Grafana
+Loki](https://grafana.com/oss/loki/) — queryable in the same Grafana as your
+metrics.
+
+## Architecture
+
+- **Vector** — a per-node `Agent` DaemonSet. Tails `/var/log/pods` (pod logs) and
+  runs a TCP `socket` source on `:6050` that receives Talos's host-log stream.
+  Ships both to Loki.
+- **Loki** — HA Monolithic (3 replicas, `replication_factor: 3`), chunks + index in
+  **AIStor (S3) on TrueNAS**. TSDB v13, 30-day compactor retention, single-tenant
+  (`auth_enabled: false`).
+- **Grafana** — a Loki datasource on the existing `kube-prometheus-stack` Grafana.
+
+Everything cluster-side is GitOps (`apps/logging/` in `flux-homelab`). The pieces
+below live **outside** git and must exist for logging to work.
+
+## Out-of-band prerequisites
+
+### 1. AIStor (S3) on TrueNAS
+
+Community MinIO was removed from the TrueNAS catalog (MinIO CE went source-only);
+**AIStor Free** is the MinIO-compatible successor.
+
+- **App**: TrueNAS → Apps → Discover → **AIStor** (Stable), Free tier. Set a Root
+  User/Password; leave the License Key blank at install.
+- **Storage**: create a **filesystem dataset** (Apps preset) and attach it as the
+  app's *primary data* volume via **Host Path** (not ixVolume — you want a named,
+  snapshottable dataset).
+- **License** (required — the service is gated): the Free tier needs a SUBNET
+  license, and only the **AIStor client** can install it (the community `mc`
+  cannot). Get a free license from [min.io](https://www.min.io/pricing) → SUBNET →
+  download `minio.license`, then:
+
+  ```bash
+  brew install minio/aistor/mc          # the AIStor client, NOT minio/stable/mc
+  mc alias set myaistor https://nas1.lab.yo61.net:30320 <ROOT_USER> <ROOT_PASSWORD>
+  mc license update myaistor ~/Downloads/minio.license
+  ```
+
+- **Bucket + key**: in the AIStor console, create a bucket **`loki`** and an access
+  key scoped to it (attach a policy allowing `s3:*` on `arn:aws:s3:::loki` and
+  `.../loki/*`). Store the key in 1Password (`op://Private/aistor credentials for
+  Loki bucket on nas1`).
+
+The S3 API endpoint is **`https://nas1.lab.yo61.net:30320`** (valid cert, so Loki
+uses `insecure: false`). Like the iSCSI StorageClass, AIStor is a standing TrueNAS
+dependency — it survives cluster rebuilds, so logs persist across a teardown.
+
+### 2. S3 credentials in OpenBao
+
+`scripts/sync-loki-secrets.sh` reads the key from 1Password and writes it to
+OpenBao `kv/loki-s3` (no secret touches argv or history). OpenBao runs on the NAS
+and **persists across cluster rebuilds**, so this is a one-time step (re-run only to
+rotate). ESO then projects it into the `loki-s3` Secret the Loki HelmRelease reads.
+
+```bash
+unset OP_SERVICE_ACCOUNT_TOKEN        # use the personal 1Password (Private vault)
+export BAO_ADDR=http://192.168.20.10:8200
+bao login
+./scripts/sync-loki-secrets.sh        # writes kv/loki-s3
+```
+
+### 3. Talos host-log config
+
+In-repo (`talos/patches/logging.yaml`, wired into `controlPlane.patches`), so a
+normal Talos apply reproduces it — no extra manual step beyond the usual
+`talhelper genconfig` + `talosctl apply-config`. It ships:
+
+- **`machine.logging`** → service logs (machined, kubelet, containerd, apid).
+- **`KmsgLogConfig`** → kernel logs (`machine.logging` covers service logs only).
+
+Both target **`tcp://10.96.0.50:6050/`** — the pinned-ClusterIP `vector-talos`
+Service. A fixed IP is required because the Talos host netns can't resolve cluster
+DNS; Cilium socket-LB (Full coverage) delivers the host-originated traffic to a
+Vector pod. (Loopback `hostPort` was ruled out: Cilium's BPF datapath is on `bond0`
+and `enable-host-port` is unset.)
+
+## Verify
+
+In Grafana → Explore → Loki:
+
+```text
+{namespace="kube-system"}                       # system + control-plane pod logs
+{source="kubernetes", namespace="lastlight"}    # a workload
+{source="talos"}                                # Talos service + kernel logs
+{source="talos"} | json | talos-service="kubelet"
+```
+
+## Known limitation: Talos node attribution
+
+Talos log JSON carries `talos-service` and `talos-level` but **no node/hostname**.
+The Vector `host` field is the SNAT'd connection peer (a pod-CIDR address under
+Cilium SNAT), not the origin node — so a Talos line can't be cleanly attributed to
+k8s-01/02/03. A fix would add per-node `extraTags` on `machine.logging`; kernel logs
+via `KmsgLogConfig` can't carry tags, so that half would still lack it. Filed as a
+follow-up.

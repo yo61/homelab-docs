@@ -1,0 +1,87 @@
+---
+title: Recover from a power cut
+description: Bring the homelab back after a power loss — unlock the OpenBao dataset, restart the app, and unseal the vault
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+When power returns, most of the homelab recovers on its own: the NAS (`nas1`) powers
+back on and imports its pool, and the cluster nodes power on and Talos brings the
+cluster back up.[^bios] The one part that needs a hand is **OpenBao** — its data
+lives on an encrypted dataset that stays locked across a reboot, so you unlock the
+dataset, (re-)start the OpenBao app, and unseal the vault.
+
+Do the NAS steps through TrueNAS itself — the **web UI** (below), or equivalently
+its CLI/API — never raw `zfs`/`docker` on the host, which bypasses the middleware and
+desyncs its view of the app and dataset. Addresses and paths are in
+[Environment](/reference/environment).
+
+<Callout type="info">
+  The cluster's control plane comes back and workloads that don't use NAS storage
+  keep working **even while OpenBao is still sealed** — existing Kubernetes Secrets
+  persist; only External Secrets Operator *refreshes* pause. **Workloads backed by
+  a NAS PVC (Loki, Prometheus, Grafana, …) won't function until the NAS storage is
+  available.** There's no rush on the unseal itself: let the cluster settle, then
+  do the steps below.
+</Callout>
+
+## 1. Unlock the OpenBao dataset
+
+OpenBao's data is on a **passphrase-encrypted** ZFS dataset (`space/apps/openbao`,
+with children `config` and `data`). Passphrase encryption never auto-unlocks on
+boot, so after a power event the dataset is locked and the app can't mount its
+storage.
+
+You'll know this is the problem when, in the TrueNAS UI:
+
+- the **openbao** app shows **Crashed** and won't deploy — its logs show a mount
+  failure under `/mnt/space/apps/openbao`;
+- **Datasets → `space/apps/openbao`** shows **Locked**, with its children unmounted.
+
+Unlock it from the web UI:
+
+> **Datasets → `space/apps/openbao` → Unlock** → enter the **dataset passphrase** →
+> tick **Unlock Children** → **Mount**.
+
+The Datasets page then shows all three datasets unlocked and mounted.
+
+<Callout type="warn">
+  The **dataset passphrase** is a different secret from the OpenBao **unseal keys**
+  — you need both (passphrase here, unseal keys in step 3). Unlock only through
+  TrueNAS (web UI, or its CLI/API); the data is inside the locked dataset, so
+  unlocking is the only fix — don't try to work around the mount error.
+</Callout>
+
+## 2. (Re-)start the OpenBao app
+
+With the dataset unlocked, start the app from the web UI:
+
+> **Apps → openbao → Start.**
+
+Wait for it to show **Running**. OpenBao boots **sealed** — that's expected.
+
+## 3. Unseal the vault
+
+From wherever you have the `bao` CLI and the three unseal keys:
+
+```bash
+export BAO_ADDR=http://192.168.20.10:8200
+bao status                 # reachable; Sealed = true
+bao operator unseal        # run 3× — one unseal key each (threshold is 3)
+bao status                 # Sealed = false
+```
+
+Unsealing is idempotent — a mistyped key just doesn't count toward the threshold;
+rerun it. You don't need to touch ESO or Flux: once OpenBao is unsealed, ESO
+re-reads the store on its next reconcile.
+
+## 4. Verify
+
+```bash
+kubectl get nodes                                 # all Ready
+kubectl get clustersecretstore homelab-openbao    # Valid
+kubectl get externalsecrets -A                    # SecretSynced
+kubectl get storageclass                          # truenas-iscsi present
+```
+
+[^bios]: The nodes auto-power-on via their BIOS **Restore on AC Power Loss → Power On** setting. If a node doesn't come back after power returns, check that setting in its BIOS/UEFI.

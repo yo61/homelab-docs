@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "rebuild-the-cluster",
+    "recover-from-a-power-cut",
     "drain-a-node",
     "add-a-new-service",
     "set-up-logging"

@@ -1,79 +1,67 @@
 ---
 title: Recover from a power cut
-description: Bring the homelab back after an unclean power loss — unlock the OpenBao dataset, start the app, unseal the vault, and power the nodes back on
+description: Bring the homelab back after a power loss — unlock the OpenBao dataset, restart the app, and unseal the vault
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-After an unclean power loss the homelab does **not** come back fully on its own.
-Two things need a hand, in this order:
+When power returns, most of the homelab recovers on its own: the NAS (`nas1`) powers
+back on and imports its pool, and the cluster nodes power on and Talos brings the
+cluster back up.[^bios] The one part that needs a hand is **OpenBao** — its data
+lives on an encrypted dataset that stays locked across a reboot, so you unlock the
+dataset, (re-)start the OpenBao app, and unseal the vault.
 
-1. **The NAS** (`nas1`) powers itself back on, but the encrypted OpenBao dataset
-   stays **locked** and the OpenBao app won't start until you unlock it.
-2. **The cluster nodes** may stay **powered off** (unless their BIOS is set to
-   restore on AC power loss — see the end of this guide).
-
-Addresses, node names, and paths below are in
-**[Environment](/reference/environment)**.
+Addresses and paths are in [Environment](/reference/environment).
 
 <Callout type="info">
-  **Nothing is on fire while OpenBao is down.** Existing Kubernetes Secrets keep
-  working the whole time — only External Secrets Operator *refreshes* pause. So
-  there's no time pressure; recover in the right order rather than rushing.
+  The cluster comes back up and keeps working **even while OpenBao is still
+  sealed** — existing Kubernetes Secrets persist; only External Secrets Operator
+  *refreshes* pause. There's no rush: let the cluster settle, then do the OpenBao
+  steps below.
 </Callout>
-
-## Recovery order (why it matters)
-
-Bring the **NAS up first** (storage + secrets), **then the nodes**. That way, when
-the cluster boots, iSCSI storage and the unsealed secret store are already waiting —
-ESO reads OpenBao, iSCSI PVs mount, no chicken-and-egg. Boot the nodes while the NAS
-is still down and you get CrashLoops and stuck mounts to untangle instead.
 
 ## 1. Unlock the OpenBao dataset
 
-OpenBao's data lives on a **passphrase-encrypted** ZFS dataset
-(`space/apps/openbao`, encryption root; children `config` and `data`). Passphrase
-encryption **never auto-unlocks on boot** by design, so after any power event the
-dataset is locked and the app can't mount its storage.
+OpenBao's data is on a **passphrase-encrypted** ZFS dataset (`space/apps/openbao`,
+with children `config` and `data`). Passphrase encryption never auto-unlocks on
+boot, so after a power event the dataset is locked and the app can't mount its
+storage.
 
-**Symptoms** (all the same root cause — a locked dataset):
+You'll know this is the problem when the OpenBao app won't start and you see any of:
 
-- The OpenBao app shows **crashed** / won't start in the TrueNAS UI.
-- Middleware: `Failed 'up' action for 'openbao' app`.
-- `docker ps -a` shows the `openbao` container stuck in **`Created`** (never ran, no logs).
-- `docker start openbao` → `error while creating mount source path
-  '/mnt/space/apps/openbao/config': mkdir … operation not permitted`.
-- `zfs mount space/apps/openbao` → `encryption key not loaded`.
-- `zfs list -o name,mounted -r space/apps/openbao` shows `mounted no` on all three.
+- the app shown as **crashed** in the TrueNAS UI, or `Failed 'up' action for 'openbao'`;
+- `docker ps -a` shows the `openbao` container stuck in **`Created`** with no logs;
+- `docker start openbao` → `mkdir /mnt/space/apps/openbao/config: operation not permitted`;
+- `zfs mount space/apps/openbao` → `encryption key not loaded`;
+- `zfs list -o name,mounted -r space/apps/openbao` shows `mounted no`.
 
-**Unlock it in the TrueNAS UI** (preferred — keeps middleware's lock-state in sync,
-which raw `zfs load-key` does not):
+Unlock it in the **TrueNAS UI** (this keeps middleware's lock-state in sync, which a
+raw `zfs load-key` does not):
 
 > **Datasets → `space/apps/openbao` → Unlock** → enter the **dataset passphrase** →
 > tick **Unlock Children** → **Mount**.
 
-That loads the key for all three datasets at once. Confirm on the NAS:
+Confirm on the NAS:
 
 ```bash
 zfs list -o name,mounted -r space/apps/openbao   # all three -> mounted yes
 ```
 
 <Callout type="warn">
-  The **dataset passphrase** is a *different* secret from the OpenBao **unseal
-  keys** — you need both this session (passphrase now, unseal keys in step 3).
-  Keep it where you keep NAS secrets. Don't `mkdir` the mountpoint or `rm`
-  anything to "fix" the mount error — the real data is inside the locked dataset;
-  the only correct action is to unlock it.
+  The **dataset passphrase** is a different secret from the OpenBao **unseal keys**
+  — you need both (passphrase here, unseal keys in step 3). Don't `mkdir` the
+  mountpoint or `rm` anything to force the mount: the data is inside the locked
+  dataset, and the only correct fix is to unlock it.
 </Callout>
 
 ## 2. (Re-)start the OpenBao app
 
-With the datasets mounted, the bind mount succeeds. Start the app in the TrueNAS UI
-(**Apps → openbao → Start**) or from the NAS shell:
+With the datasets mounted, start the app — TrueNAS **Apps → openbao → Start**, or
+from the NAS shell:
 
 ```bash
 docker start openbao
-docker ps | grep -i bao        # STATUS now Up (was Created)
+docker ps | grep -i bao        # STATUS now Up
 ```
 
 OpenBao boots **sealed** — that's expected.
@@ -89,21 +77,11 @@ bao operator unseal        # run 3× — one unseal key each (threshold is 3)
 bao status                 # Sealed = false
 ```
 
-Unsealing is idempotent — a mistyped key simply doesn't count toward the threshold;
-rerun it. You don't need to touch ESO or Flux: once OpenBao is unsealed, ESO's next
-reconcile re-reads the store on its own.
+Unsealing is idempotent — a mistyped key just doesn't count toward the threshold;
+rerun it. You don't need to touch ESO or Flux: once OpenBao is unsealed, ESO
+re-reads the store on its next reconcile.
 
-## 4. Power on the cluster nodes
-
-If the nodes stayed off, power on **k8s-01, k8s-02, k8s-03**. The cluster then
-recovers hands-off:
-
-Talos boots → etcd re-forms quorum → the API VIP (`192.168.20.9:6443`) is claimed →
-Cilium (day-0 inline) → Flux reconciles → ESO reads the unsealed OpenBao → iSCSI PVs
-mount against the up NAS → workloads start. A cold boot also means a fresh
-`ext-iscsid` on every node, so no stale iSCSI sessions carry over.
-
-## 5. Verify
+## 4. Verify
 
 ```bash
 kubectl get nodes                                 # all Ready
@@ -112,11 +90,4 @@ kubectl get externalsecrets -A                    # SecretSynced
 kubectl get storageclass                          # truenas-iscsi present
 ```
 
-## Make it hands-off next time
-
-The NAS already restores on AC power loss; the nodes should too. Set each node's
-BIOS/UEFI **Restore on AC Power Loss → Power On** (no IPMI on the mini-PCs, so this
-is a per-node console step). With that set, a power cut becomes a hands-off
-recovery — the hardware comes back, the NAS auto-imports, and the only remaining
-manual step is unlocking the OpenBao dataset (step 1), which is intentional: the
-passphrase never rests on the NAS.
+[^bios]: The nodes auto-power-on via their BIOS **Restore on AC Power Loss → Power On** setting. If a node doesn't come back after power returns, check that setting in its BIOS/UEFI.

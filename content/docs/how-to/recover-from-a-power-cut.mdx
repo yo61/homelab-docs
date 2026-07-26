@@ -11,7 +11,10 @@ cluster back up.[^bios] The one part that needs a hand is **OpenBao** — its da
 lives on an encrypted dataset that stays locked across a reboot, so you unlock the
 dataset, (re-)start the OpenBao app, and unseal the vault.
 
-Addresses and paths are in [Environment](/reference/environment).
+Do the NAS steps through TrueNAS itself — the **web UI** (below), or equivalently
+its CLI/API — never raw `zfs`/`docker` on the host, which bypasses the middleware and
+desyncs its view of the app and dataset. Addresses and paths are in
+[Environment](/reference/environment).
 
 <Callout type="info">
   The cluster comes back up and keeps working **even while OpenBao is still
@@ -27,44 +30,33 @@ with children `config` and `data`). Passphrase encryption never auto-unlocks on
 boot, so after a power event the dataset is locked and the app can't mount its
 storage.
 
-You'll know this is the problem when the OpenBao app won't start and you see any of:
+You'll know this is the problem when, in the TrueNAS UI:
 
-- the app shown as **crashed** in the TrueNAS UI, or `Failed 'up' action for 'openbao'`;
-- `docker ps -a` shows the `openbao` container stuck in **`Created`** with no logs;
-- `docker start openbao` → `mkdir /mnt/space/apps/openbao/config: operation not permitted`;
-- `zfs mount space/apps/openbao` → `encryption key not loaded`;
-- `zfs list -o name,mounted -r space/apps/openbao` shows `mounted no`.
+- the **openbao** app shows **Crashed** and won't deploy — its logs show a mount
+  failure under `/mnt/space/apps/openbao`;
+- **Datasets → `space/apps/openbao`** shows **Locked**, with its children unmounted.
 
-Unlock it in the **TrueNAS UI** (this keeps middleware's lock-state in sync, which a
-raw `zfs load-key` does not):
+Unlock it from the web UI:
 
 > **Datasets → `space/apps/openbao` → Unlock** → enter the **dataset passphrase** →
 > tick **Unlock Children** → **Mount**.
 
-Confirm on the NAS:
-
-```bash
-zfs list -o name,mounted -r space/apps/openbao   # all three -> mounted yes
-```
+The Datasets page then shows all three datasets unlocked and mounted.
 
 <Callout type="warn">
   The **dataset passphrase** is a different secret from the OpenBao **unseal keys**
-  — you need both (passphrase here, unseal keys in step 3). Don't `mkdir` the
-  mountpoint or `rm` anything to force the mount: the data is inside the locked
-  dataset, and the only correct fix is to unlock it.
+  — you need both (passphrase here, unseal keys in step 3). Unlock only through
+  TrueNAS (web UI, or its CLI/API); the data is inside the locked dataset, so
+  unlocking is the only fix — don't try to work around the mount error.
 </Callout>
 
 ## 2. (Re-)start the OpenBao app
 
-With the datasets mounted, start the app — TrueNAS **Apps → openbao → Start**, or
-from the NAS shell:
+With the dataset unlocked, start the app from the web UI:
 
-```bash
-docker start openbao
-docker ps | grep -i bao        # STATUS now Up
-```
+> **Apps → openbao → Start.**
 
-OpenBao boots **sealed** — that's expected.
+Wait for it to show **Running**. OpenBao boots **sealed** — that's expected.
 
 ## 3. Unseal the vault
 

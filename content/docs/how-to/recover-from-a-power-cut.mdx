@@ -17,10 +17,12 @@ desyncs its view of the app and dataset. Addresses and paths are in
 [Environment](/reference/environment).
 
 <Callout type="info">
-  The cluster comes back up and keeps working **even while OpenBao is still
-  sealed** — existing Kubernetes Secrets persist; only External Secrets Operator
-  *refreshes* pause. There's no rush: let the cluster settle, then do the OpenBao
-  steps below.
+  The cluster's control plane comes back and workloads that don't use NAS storage
+  keep working **even while OpenBao is still sealed** — existing Kubernetes Secrets
+  persist; only External Secrets Operator *refreshes* pause. **Workloads backed by
+  a NAS PVC (Loki, Prometheus, Grafana, …) won't function until the NAS storage is
+  available.** There's no rush on the unseal itself: let the cluster settle, then
+  do the steps below.
 </Callout>
 
 ## 1. Unlock the OpenBao dataset

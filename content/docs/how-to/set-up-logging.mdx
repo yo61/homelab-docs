@@ -109,6 +109,10 @@ In Grafana → Explore → Loki:
 {source="talos"} | json | talos-service="kubelet"
 ```
 
+The Cluster Logs dashboard defaults to hiding known-benign noise; see
+[Reading cluster logs](/explanation/reading-cluster-logs) for what that filter
+covers and how to tell benign lines from a real fault.
+
 ## Known limitation: Talos node attribution
 
 Talos log JSON carries `talos-service` and `talos-level` but **no node/hostname**.

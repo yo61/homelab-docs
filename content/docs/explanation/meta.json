@@ -6,6 +6,7 @@
     "talos-rebuild-gotchas",
     "why-gitops",
     "logging-choices",
+    "reading-cluster-logs",
     "evolution"
   ]
 }

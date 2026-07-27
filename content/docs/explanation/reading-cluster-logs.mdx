@@ -1,0 +1,130 @@
+---
+title: Reading cluster logs
+description: Why benign ERROR/WARN lines are normal, the patterns they fall into, and how to tell one from a real fault
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A healthy cluster logs errors constantly. Kubernetes controllers, Cilium, Loki,
+cert-manager and Grafana all emit routine, expected events at `ERROR` and `WARN`.
+The level tag is set by the developer who wrote the line to signal severity *to
+their own subsystem* — it says nothing about whether **you** need to act.
+
+So don't triage on the level. Triage on **pattern and timing**: a one-time boot
+burst, a steady load-independent heartbeat, and a rising sustained volume are
+three different things wearing the same `ERROR` tag. Below are the recurring
+shapes of benign noise, each with the one detail — the *discriminator* — that
+separates it from the real fault it resembles.
+
+## Patterns of benign noise
+
+### The cancellation cascade
+
+One consumer gives up — a dashboard refresh supersedes its own query, a user
+navigates away, a health-check race is decided — and every worker still mid-flight
+logs an error as it unwinds. A single cancel upstream becomes a fan of `ERROR`
+lines downstream. Loki's query path is the loudest example: one abandoned query
+produces `context canceled`, `closing iterator`, and scheduler-notify errors
+across every shard and querier.
+
+**Tell-apart:** benign cancels say `canceled` / `context canceled` / `operation
+was canceled`. A real outage says `connection refused`, `TLS handshake timeout`,
+or `no route to host`. The words are the signal — never the surrounding line.
+
+### The redundant health-check heartbeat
+
+A component keeps a pool of connections and probes them continuously; the loser of
+each race gets its dial canceled. The result is a **flat, low, load-independent**
+trickle of errors all day. The apiserver's health-checks against etcd are the
+canonical case — a steady couple per minute, forever.
+
+**Tell-apart:** the rate is constant and *decoupled from load*. A real fault rises
+with traffic or arrives as a step change. Same cancel-vs-refused rule applies:
+`operation was canceled` is the heartbeat; `connection refused` is etcd actually
+down.
+
+### The controller reaching for a resource you never installed
+
+A controller often ships RBAC and type registrations for *optional* features — an
+experimental API channel, a CRD you can enable but didn't. When it enumerates one
+of those types, the client can't find it and logs `no kind is registered` or
+`not found`. Cilium's gateway controller does this for route types that live only
+in the Gateway API *experimental* channel while you run the *standard* one.
+
+**Tell-apart:** the missing type is one you deliberately don't use, and the
+feature you *do* use is healthy. Check the object's own status — a `Programmed` /
+`Ready` Gateway proves routing works — not the controller's log.
+
+### The copy that carries annotations but not ownership
+
+When one object is deep-copied into another namespace — secret-sync, mirroring,
+backups — its convenience annotations ride along. A watcher keyed on those
+annotations then looks for the *owner* in the copy's namespace and doesn't find
+it, because ownership was never copied. cert-manager's cainjector does this when
+Cilium syncs a TLS secret into its own namespace: the copied
+`cert-manager.io/certificate-name` annotation sends cainjector hunting for a
+Certificate that only ever existed beside the original.
+
+**Tell-apart:** the authoritative owner still lives in the *source* namespace and
+is healthy (its `ownerReference`, not an annotation, is what's real). Only the
+lookup in the copy's namespace fails. Annotations are data, not ownership.
+
+### The informer edge case
+
+A controller's cache occasionally hands it an event missing a field — the old
+object on an update, during a resync — and it logs the gap at `ERROR`. It reads
+alarming and names some unrelated object (often a Helm release-state secret caught
+by a broad watch).
+
+**Tell-apart:** it fires once or rarely, names something the controller doesn't
+actually manage, and nothing it *does* manage is broken. Transient cache
+plumbing, not a reconcile failure.
+
+### The credential-rotation race
+
+A component rotates a token or session on a timer. A request that arrives
+mid-rotation, on a path that can't complete the swap in-band, logs a warning and
+the client simply retries or re-authenticates. Grafana's session-token rotation
+warns like this whenever multiple tabs, embedded panels, or health probes race
+the interval.
+
+**Tell-apart:** there's no user-visible failure — nobody is logged out, no request
+ultimately fails. The frequency tracks tabs and probes, not incidents.
+
+## The discriminators, in one place
+
+| Benign | Real |
+| --- | --- |
+| `canceled` / `context canceled` | `connection refused`, `TLS handshake timeout` |
+| Flat rate, independent of load | Rises with load, or a step change |
+| Missing an *optional* type you don't use | The feature you *do* use is failing |
+| Owner healthy in its source namespace | Owner genuinely absent everywhere |
+| Names an unrelated object, fires once | Names what it manages, sustained |
+| No user-visible effect | Requests fail, users blocked |
+
+The through-line: **read the object's own status, not the log line about it.** A
+log describes one component's local view; the resource's `status` is the verdict.
+
+## The dashboard's "Known noise" toggle
+
+The [Cluster Logs dashboard](/how-to/set-up-logging) carries a **Known noise**
+variable (`hide_noise`) with two settings. The default, *Hide known noise*,
+applies a Loki `!~` line filter across every log panel and the error/warn rate
+stats; *Show everything* switches it off to reveal the raw stream.
+
+It is deliberately **narrow**. It hides only the highest-*volume* self-inflicted
+traffic — the query-cancellation cascade the dashboard triggers on itself, plus
+the apiserver→etcd heartbeat — because that volume is what drowns a real signal.
+The low-rate benign lines above are left **visible on purpose**: filtering them
+would risk masking a genuine variant that shares their shape, and they're rare
+enough not to bury anything. The filter lives in
+`apps/logging/dashboards/cluster-logs.json`; the full line-by-line registry of
+what's benign and why is kept in the repo's internal knowledge notes, not here,
+because it churns with exact names and versions.
+
+<Callout type="info">
+  When a line is genuinely ambiguous, treat it as real until you've found the
+  discriminator. Investigating a benign line once — and writing down how to
+  recognise it next time — is cheap. Silently filtering a real one is an outage
+  you've arranged not to see.
+</Callout>

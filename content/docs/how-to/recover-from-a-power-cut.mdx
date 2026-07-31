@@ -84,4 +84,54 @@ kubectl get externalsecrets -A                    # SecretSynced
 kubectl get storageclass                          # truenas-iscsi present
 ```
 
+## 5. Clean up ghost pods
+
+A hard power loss leaves **tombstone pods** behind. When a node loses power, its
+kubelet can't gracefully evict; on reboot it marks the pods it *had* been running
+as `Failed` instead of deleting them. The controllers already replaced them with
+fresh `Running` pods, so nothing ever cleans up the corpses — they just linger in
+`kubectl get pods` as `ContainerStatusUnknown` or `Error`.
+
+<Callout type="info">
+  Talos enables Kubernetes [Graceful Node Shutdown](https://www.talos.dev/latest/learn-more/knowledge-base/)
+  by default (20 s regular / 10 s critical pods), which is why *orderly* reboots
+  — `talosctl reboot`, `talosctl upgrade`, a [`kubectl drain`](/how-to/drain-a-node)
+  — don't produce these. A power cut delivers no shutdown signal, so that handler
+  never runs and tuning the grace period can't prevent it. The only thing that
+  turns a power cut into an orderly shutdown is a UPS that signals the nodes to
+  shut down before the battery dies; without one, expect ghosts and clear them
+  below.
+</Callout>
+
+Find them — every one is phase `Failed` with reason `NodeShutdown`:
+
+```bash
+kubectl get pods -A --field-selector status.phase=Failed        # the ghost list
+kubectl get pods -A --field-selector status.phase=Failed \
+  -o jsonpath='{range .items[*]}{.status.reason}{"\n"}{end}' | sort | uniq -c
+```
+
+Delete them all:
+
+```bash
+kubectl delete pods -A --field-selector status.phase=Failed
+```
+
+<Callout type="info">
+  Use the **field selector**, not a name-grep. `status.phase=Failed` is evaluated
+  server-side and structurally can't match a `Running` pod, so it only ever removes
+  tombstones. Deleting them is safe because they're controller-owned (Deployments,
+  ReplicaSets) whose desired replica count is already satisfied — you're removing a
+  dead etcd object, not a live workload. Confirm that first with
+  `kubectl get deploy -A` showing each `READY` at full count.
+</Callout>
+
+<Callout type="warn">
+  This clears `Failed` pods, not stuck `Terminating` ones. A stateful pod on a
+  `truenas-iscsi` PVC can hang `Terminating` after a hard node loss because its
+  `VolumeAttachment` never detached. That's a different fix (check
+  `kubectl get volumeattachment`) — don't force-delete it, or the PVC may
+  double-mount when it reschedules.
+</Callout>
+
 [^bios]: The nodes auto-power-on via their BIOS **Restore on AC Power Loss → Power On** setting. If a node doesn't come back after power returns, check that setting in its BIOS/UEFI.

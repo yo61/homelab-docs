@@ -3,6 +3,10 @@ allowBuilds:
   sharp: true
 
 overrides:
+  # shiki 4.4.2 was published <24h before CI's minimumReleaseAge cutoff and
+  # fails pnpm's supply-chain policy check; pin to the previous patch (4.4.1,
+  # published 2026-07-31) which satisfies fumadocs-core's ^4.3.1 range.
+  shiki: 4.4.1
   postcss@<8.5.10: ^8.5.10
   brace-expansion@<1.1.16: 1.1.16
   fast-uri@<3.1.4: 3.1.4

@@ -2,13 +2,30 @@ allowBuilds:
   esbuild: true
   sharp: true
 
-# Each entry raises a transitive dependency to a non-vulnerable floor. Always use
-# a caret, never an exact version: an exact pin becomes a *ceiling*, so the
+# Two kinds of entry live here, with opposite rules.
+#
+# Security floors raise a transitive dependency above a vulnerable version, and
+# must always use a caret. An exact pin turns the floor into a *ceiling*, so the
 # override added to clear one advisory silently blocks the fix for the next one.
 # fast-uri hit exactly that — pinned at 3.1.4, it made GHSA-7p8r-x3mc-p8w7
 # (fixed in 3.1.5) report as "security_update_not_possible" for a week.
+#
+# Temporary holds do the reverse: they cap a dependency deliberately, and are
+# exact by design. Each states the condition for its own removal.
 overrides:
   postcss@<8.5.10: ^8.5.10
   brace-expansion@<1.1.16: ^1.1.16
   fast-uri@<3.1.5: ^3.1.5
   sharp@<0.35.0: ^0.35.3
+
+  # Temporary hold. fumadocs-core@16.14.0 allows ^4.3.1, and 4.4.3 was published
+  # inside pnpm's minimumReleaseAge window, so a fresh resolution fails CI.
+  # Remove once 4.4.3 has aged past the cutoff.
+  shiki: 4.3.1
+  "@shikijs/core": 4.3.1
+  "@shikijs/engine-javascript": 4.3.1
+  "@shikijs/engine-oniguruma": 4.3.1
+  "@shikijs/langs": 4.3.1
+  "@shikijs/primitive": 4.3.1
+  "@shikijs/themes": 4.3.1
+  "@shikijs/types": 4.3.1

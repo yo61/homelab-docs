@@ -1,0 +1,12 @@
+{
+  // Inherits the repo-wide rules; only the MDX-specific opt-out lives here.
+  "extends": "../.markdownlint.jsonc",
+
+  // Fumadocs custom heading anchors are written `## Heading [#custom-id]`.
+  // markdownlint only understands the `{#custom-id}` form, so it slugifies the
+  // bracket into the anchor (`#heading-custom-id`) and then reports every valid
+  // in-page link as broken — 12 false positives in explanation/evolution.mdx
+  // alone. Scoped to content/ so anchor checking still applies to the plain
+  // markdown under docs/ and at the repo root.
+  "MD051": false,
+}

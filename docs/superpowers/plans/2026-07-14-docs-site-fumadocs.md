@@ -1,6 +1,8 @@
 # Fumadocs Docs Site + GitHub Pages Pipeline — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stand up a buildable, browsable, deployable Fumadocs documentation
 site under `docs/site/`, rendering a Diátaxis skeleton and publishing to GitHub
@@ -96,14 +98,23 @@ OG-image route and its wiring, and make the subtree install cleanly under the
 repo's pre-commit hooks. No site content yet — that is Task 2.
 
 **Files:**
-- Create (verbatim copy): `docs/site/{source.config.ts, tsconfig.json, postcss.config.mjs, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .gitignore}`
-- Create (verbatim copy): `docs/site/app/{layout.tsx, global.css}`, `docs/site/app/(docs)/layout.tsx`, `docs/site/app/api/search/route.ts`, `docs/site/app/llms.txt/route.ts`, `docs/site/app/llms-full.txt/route.ts`, `docs/site/app/llms.mdx/docs/[[...slug]]/route.ts`
-- Create (verbatim copy): `docs/site/components/{mdx.tsx, provider.tsx, search.tsx}`, `docs/site/lib/{cn.ts, layout.shared.tsx}`
-- Create (adapted): `docs/site/next.config.mjs`, `docs/site/README.md`, `docs/site/lib/shared.ts`, `docs/site/lib/source.ts`, `docs/site/app/(docs)/[[...slug]]/page.tsx`
+
+- Create (verbatim copy):
+  `docs/site/{source.config.ts, tsconfig.json, postcss.config.mjs, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .gitignore}` <!-- markdownlint-disable-line MD013 -- one code span, no wrap point -->
+
+- Create (verbatim copy): `docs/site/app/{layout.tsx, global.css}`,
+  `docs/site/app/(docs)/layout.tsx`, `docs/site/app/api/search/route.ts`,
+  `docs/site/app/llms.txt/route.ts`, `docs/site/app/llms-full.txt/route.ts`,
+  `docs/site/app/llms.mdx/docs/[[...slug]]/route.ts`
+- Create (verbatim copy): `docs/site/components/{mdx.tsx, provider.tsx, search.tsx}`,
+  `docs/site/lib/{cn.ts, layout.shared.tsx}`
+- Create (adapted): `docs/site/next.config.mjs`, `docs/site/README.md`, `docs/site/lib/shared.ts`,
+  `docs/site/lib/source.ts`, `docs/site/app/(docs)/[[...slug]]/page.tsx`
 - Modify: `.pre-commit-config.yaml`
 - **Do NOT create:** `docs/site/app/og/**`
 
 **Interfaces:**
+
 - Produces for Task 2: content lives in `docs/site/content/docs/`; the loader
   `source` (in `lib/source.ts`) has `baseUrl: '/'`; frontmatter uses
   `pageSchema` (fields: `title`, `description`, optional `full`).
@@ -336,6 +347,7 @@ pnpm types:check  # fumadocs-mdx + next typegen + tsc --noEmit
 
 Deploy is automated by `.github/workflows/docs.yaml` on push to `main` touching
 `docs/site/**`.
+
 ```
 
 - [ ] **Step 7: Guard the vendored lockfile from auto-fixing hooks**
@@ -408,6 +420,7 @@ The browser check is a distinct gate: `output: 'export'` + `basePath` bugs
 produce runtime 404s that a green `pnpm build` hides.
 
 **Files:**
+
 - Create: `docs/site/content/docs/index.mdx`
 - Create: `docs/site/content/docs/meta.json`
 - Create (×4 quadrants `tutorials`, `how-to`, `reference`, `explanation`):
@@ -415,6 +428,7 @@ produce runtime 404s that a green `pnpm build` hides.
   and one placeholder stub `.mdx`
 
 **Interfaces:**
+
 - Consumes from Task 1: `source` loader with `baseUrl: '/'`; `pageSchema`
   frontmatter (`title`, `description`); `<Cards>`/`<Card>` from
   `fumadocs-ui/components/card`.
@@ -715,9 +729,11 @@ stable release at implementation time (do not trust go-udap's copied pins
 blindly), then lint for correctness and security.
 
 **Files:**
+
 - Create: `.github/workflows/docs.yaml`
 
 **Interfaces:**
+
 - Consumes from Tasks 1–2: `docs/site/` builds via `pnpm install --frozen-lockfile`
   then `pnpm build` → `docs/site/out`.
 
@@ -840,10 +856,12 @@ to `main`, the site goes live at `https://yo61.github.io/flux-homelab/`.
 ## Self-Review (against the spec)
 
 **Spec coverage:**
+
 - Diátaxis skeleton (4 quadrants, canonical labels) → Task 2. ✓
 - Publish to GitHub Project Pages, basePath `/flux-homelab` → Task 1 Step 2 + Task 3. ✓
 - Keep search + llms.* routes → Task 1 (copied verbatim, verified Task 2 Step 8). ✓
-- Drop OG route + getPageImage wiring → Task 1 Steps 3–5 (og not copied; shared/source/page adapted). ✓
+- Drop OG route + getPageImage wiring → Task 1 Steps 3–5 (og not copied; shared/source/page
+  adapted). ✓
 - Config adaptations (appName, gitConfig, basePath, siteUrl) → Task 1 Steps 2–3. ✓
 - Keep pinned versions + copy lockfile → Task 1 Step 1 (verbatim). ✓
 - Publishing pipeline (triggers, concurrency, jobs, SHA-pin + re-verify) → Task 3. ✓

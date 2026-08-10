@@ -27,19 +27,23 @@ Read the timeline for the sequence; read the arcs for the reasoning.
 **Before the repo**
 
 - **~Jun 2026** — [choosing the metal](#the-metal): an arm64 plan pivots to x86
-- **pre-repo** — [the network and the PXE dead-end](#pxe): VLAN 20, and PXE blocked by bonded switch ports
+- **pre-repo** — [the network and the PXE dead-end](#pxe): VLAN 20, and PXE blocked by bonded switch
+  ports
 - **early Jul** — [Talos comes up](#talos): a 3-node HA control plane; k3s the road not taken
-- **pre-repo** — [the drift lesson](#the-drift-lesson): a vanished kubelet flag that made GitOps non-negotiable
+- **pre-repo** — [the drift lesson](#the-drift-lesson): a vanished kubelet flag that made GitOps
+  non-negotiable
 - **→ Jul 7** — [the storage saga](#the-storage-saga): democratic-csi → tns-csi → a custom image
 
 **The repo era**
 
 - **Jul 8** — [the repo is born](#the-seed): Flux, ESO/OpenBao, Cilium day-0
-- **Jul 8–14** — [Cilium eats the network stack](#cilium-consolidation): MetalLB and ingress-nginx, gone
+- **Jul 8–14** — [Cilium eats the network stack](#cilium-consolidation): MetalLB and ingress-nginx,
+  gone
 - **Jul 13–14** — [proving it](#first-rebuild): the first bare-metal rebuild
 - **Jul 14–15** — [going public](#going-public): `*.lab.yo61.net`, DNS and secrets, all declarative
 - **Jul 20** — [automating dependencies](#automating-dependencies): Renovate on a GitHub App
-- **Jul 21** — [Cilium day-0 → day-2](#cilium-day0-day2): a CNI Flux can upgrade, proven by a convergence rebuild
+- **Jul 21** — [Cilium day-0 → day-2](#cilium-day0-day2): a CNI Flux can upgrade, proven by a
+  convergence rebuild
 - **Jul 22** — [ops ergonomics and the docs split](#ops-and-docs)
 
 ## Choosing the metal [#the-metal]

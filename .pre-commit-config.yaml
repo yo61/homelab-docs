@@ -26,6 +26,17 @@ repos:
         args: [--maxkb=1024]
       - id: check-merge-conflict
 
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.2
+    hooks:
+      - id: markdownlint-cli2
+        # identify tags .mdx as `mdx`, not `markdown`, so the stock hook (which
+        # declares `types: [markdown]`) skips every page under content/. Since
+        # `types` and `types_or` are ANDed, relaxing `types` to `text` is
+        # required as well — `types_or` alone silently keeps MDX excluded.
+        types: [text]
+        types_or: [markdown, mdx]
+
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:

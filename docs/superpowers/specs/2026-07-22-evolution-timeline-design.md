@@ -56,18 +56,21 @@ changelog and not a how-to.
 ## Page anatomy
 
 ### Timeline strip (top)
+
 A short dated list of the ~8 turning points, newest theme last, each line linking
 to its arc anchor. Includes the spanning threads shown in true sequence (Cilium
 day-0 at bootstrap vs day-2 later; Renovate arriving mid-history). Kept terse —
 one line per beat, date + one-clause what.
 
 ### Arc template
+
 Each arc is an `##` section with a stable anchor and a date range in/under the
 header. Body follows **problem → choice → trade-off**, links out to the relevant
 ADR / gotchas / knowledge / existing-explanation page. Bold key terms, house
 style (matches `cilium-day0-day2.mdx`).
 
 ### Annotation markers
+
 Wherever the pain/why can't be sourced from artifacts, an inline blockquote
 callout:
 
@@ -121,9 +124,10 @@ Content per arc (problem → choice → trade-off):
 8. **Proving it: the bare-metal rebuild** — the north-star validation: a full
    wipe→rebuild that came up with zero manual steps and let Flux converge Cilium
    1.19.5→1.19.6 (#43, #44). Coda: the ops tooling that fell out of it — Taskfile
-   + `iscsi-reclaim` (#47).
+   - `iscsi-reclaim` (#47).
 
 ### Nav (meta.json)
+
 Append `evolution` to `explanation/meta.json` `pages` (after `why-gitops`, or
 positioned to read well — likely first or last in the list; decide at authoring).
 
@@ -177,20 +181,33 @@ file becomes the primary *why/pain* source; git log stays the repo-era spine.
 **Revised arc list (chronological, ~12 arcs):**
 
 *Prehistory (pre-repo, from COWORK phases 0–4):*
+
 1. Choosing the metal (`#the-metal`) — arm64→x86 pivot (supply crunch). COWORK Ph0.
-2. The network and the PXE dead-end (`#pxe`) — VLAN 20, asymmetric firewall, netboot.xyz iPXE too old → USB install → later PXE-to-maintenance. COWORK Ph1.
-3. Talos comes up (`#talos`) — 3-node HA CP, k8s 1.36.2; k3s the road not taken; `allowSchedulingOnControlPlanes`, HostnameConfig, Image Factory schematic re-pin. COWORK Ph2.
-4. The drift lesson: why GitOps (`#the-drift-lesson`) — metrics-server kubelet flag drifted → broke; origin of the declarative posture + the inventory drift test. COWORK Ph3.
-5. The storage saga (`#the-storage-saga`) — democratic-csi dead on TrueNAS 26 → tns-csi → iscsiadm 2.1.10-vs-2.1.11 hang → custom `ghcr.io/yo61/tns-csi` image. COWORK Ph4. (Richest material.)
+2. The network and the PXE dead-end (`#pxe`) — VLAN 20, asymmetric firewall, netboot.xyz iPXE too
+   old → USB install → later PXE-to-maintenance. COWORK Ph1.
+3. Talos comes up (`#talos`) — 3-node HA CP, k8s 1.36.2; k3s the road not taken;
+   `allowSchedulingOnControlPlanes`, HostnameConfig, Image Factory schematic re-pin. COWORK Ph2.
+4. The drift lesson: why GitOps (`#the-drift-lesson`) — metrics-server kubelet flag drifted → broke;
+   origin of the declarative posture + the inventory drift test. COWORK Ph3.
+5. The storage saga (`#the-storage-saga`) — democratic-csi dead on TrueNAS 26 → tns-csi → iscsiadm
+   2.1.10-vs-2.1.11 hang → custom `ghcr.io/yo61/tns-csi` image. COWORK Ph4. (Richest material.)
 
 *Repo era (git log spine + COWORK phases 5–11):*
-6. The repo is born (`#the-seed`) — Flux/talhelper; ESO+OpenBao over SOPS-in-git; Cilium day-0 inline; same-day fix-ups (#4 PodSecurity, #6 node-exporter, #7 static IQN). COWORK Ph5.
-7. Cilium eats the network stack (`#cilium-consolidation`) — replaces MetalLB (LB-IPAM/L2), ingress-nginx (Gateway API; archived Mar 2026 + CVEs), kube-proxy (eBPF), flannel; GatewayClass day-0 gotcha (#16–18). COWORK Ph6. **Answers the consolidation question.**
-8. Proving it: the first rebuild (`#first-rebuild`) — the declarative-bring-up proof (#19–22); PXE-to-maintenance closes the PXE saga; LAG teardown ordering. COWORK Ph7.
-9. Going public (`#going-public`) — HTTPRoutes on `*.lab.yo61.net` (#23/#24); external-dns→UniFi (#26/#27/#28); Grafana creds via ESO (#25). COWORK Ph8.
-10. Automating dependencies (`#automating-dependencies`) — Renovate on a GitHub App (#30/#32/#33); the Cilium re-render wrinkle; automerge OFF. COWORK Ph9.
-11. Cilium: day-0 → day-2 (`#cilium-day0-day2`) — Flux day-2 model (#39–41); helm-4 render ADR; the **convergence rebuild** 1.19.5→1.19.6 (#42/#43/#44/#45). COWORK Ph10.
-12. Ops ergonomics & the docs split (`#ops-and-docs`) — Taskfile + iscsi-reclaim (#47); docs split to public homelab-docs (#48). COWORK Ph11.
+6. The repo is born (`#the-seed`) — Flux/talhelper; ESO+OpenBao over SOPS-in-git; Cilium day-0
+   inline; same-day fix-ups (#4 PodSecurity, #6 node-exporter, #7 static IQN). COWORK Ph5.
+7. Cilium eats the network stack (`#cilium-consolidation`) — replaces MetalLB (LB-IPAM/L2),
+   ingress-nginx (Gateway API; archived Mar 2026 + CVEs), kube-proxy (eBPF), flannel; GatewayClass
+   day-0 gotcha (#16–18). COWORK Ph6. **Answers the consolidation question.**
+8. Proving it: the first rebuild (`#first-rebuild`) — the declarative-bring-up proof (#19–22);
+   PXE-to-maintenance closes the PXE saga; LAG teardown ordering. COWORK Ph7.
+9. Going public (`#going-public`) — HTTPRoutes on `*.lab.yo61.net` (#23/#24); external-dns→UniFi
+   (#26/#27/#28); Grafana creds via ESO (#25). COWORK Ph8.
+10. Automating dependencies (`#automating-dependencies`) — Renovate on a GitHub App (#30/#32/#33);
+    the Cilium re-render wrinkle; automerge OFF. COWORK Ph9.
+11. Cilium: day-0 → day-2 (`#cilium-day0-day2`) — Flux day-2 model (#39–41); helm-4 render ADR; the
+    **convergence rebuild** 1.19.5→1.19.6 (#42/#43/#44/#45). COWORK Ph10.
+12. Ops ergonomics & the docs split (`#ops-and-docs`) — Taskfile + iscsi-reclaim (#47); docs split
+    to public homelab-docs (#48). COWORK Ph11.
 
 **Corrections folded in:** the Cilium *consolidation* (arc 7) is new; the two rebuilds
 are now distinct (arc 8 = declarative proof, arc 11 = convergence). The originally-drafted

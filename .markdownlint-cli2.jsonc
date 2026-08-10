@@ -1,0 +1,17 @@
+{
+  // Rule config lives in .markdownlint.jsonc (so editors that don't speak cli2
+  // config still pick it up); content/.markdownlint.jsonc extends it for MDX.
+  // This file carries only cli2-specific settings.
+  //
+  // Deliberately no "globs" key: cli2 *merges* config globs with the paths given
+  // on the command line, so setting it here would make the pre-commit hook lint
+  // the whole repo on every commit instead of just the staged files. CI passes
+  // its globs explicitly instead.
+  "ignores": [
+    "node_modules",
+    // Next.js build cache, static export output, and fumadocs-mdx codegen.
+    ".next",
+    "out",
+    ".source",
+  ],
+}

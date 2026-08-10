@@ -104,7 +104,8 @@ distinction matters because each needs a different filter:
 | `Succeeded` | An **orderly** shutdown — `talosctl reboot`, `talosctl upgrade`, a [`kubectl drain`](/how-to/drain-a-node). The containers are sent `SIGTERM`; one that handles it and exits 0 ends up here. | `Completed` |
 
 <Callout type="info">
-  Talos enables Kubernetes [Graceful Node Shutdown](https://www.talos.dev/latest/learn-more/knowledge-base/)
+  Talos enables Kubernetes
+  [Graceful Node Shutdown](https://www.talos.dev/latest/learn-more/knowledge-base/)
   by default (20 s regular / 10 s critical pods). That makes an orderly reboot
   *clean*, but it does **not** make it tombstone-free: it `SIGTERM`s the
   containers rather than deleting the pod objects, so a well-behaved container
@@ -157,4 +158,7 @@ kubectl delete pods -A --field-selector status.phase=Succeeded -l pod-template-h
   double-mount when it reschedules.
 </Callout>
 
-[^bios]: The nodes auto-power-on via their BIOS **Restore on AC Power Loss → Power On** setting. If a node doesn't come back after power returns, check that setting in its BIOS/UEFI.
+[^bios]:
+    The nodes auto-power-on via their BIOS **Restore on AC Power Loss → Power On**
+    setting. If a node doesn't come back after power returns, check that setting in
+    its BIOS/UEFI.

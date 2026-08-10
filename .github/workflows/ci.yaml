@@ -25,3 +25,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm types:check
+
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # Globs are passed here rather than via .markdownlint-cli2.jsonc, because
+      # cli2 merges config globs with command-line paths — which would make the
+      # pre-commit hook lint the whole repo instead of just the staged files.
+      - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff  # v24.2.0
+        with:
+          globs: |
+            **/*.md
+            **/*.mdx

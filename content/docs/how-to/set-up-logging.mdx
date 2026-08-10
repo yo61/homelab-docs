@@ -44,25 +44,26 @@ Community MinIO was removed from the TrueNAS catalog (MinIO CE went source-only)
   mc license update myaistor ~/Downloads/minio.license
   ```
 
-- **Bucket + key**: in the AIStor console, create a bucket **`loki`** and an access
-  key scoped to it (attach the policy below, allowing `s3:*` on the `loki` bucket).
-  Store the key in 1Password (`op://Private/aistor credentials for Loki bucket on
-  nas1`).
+- **Bucket + key**: create the `loki` bucket and a bucket-scoped access key with
+  `mc` (the `myaistor` alias from the license step above). The policy allows `s3:*`
+  on just the `loki` bucket. Store the printed key in 1Password
+  (`op://Homelab/aistor credentials for Loki bucket on nas1`).
 
-  ```json title="loki bucket policy"
+  ```bash
+  mc mb myaistor/loki
+
+  cat > /tmp/loki-policy.json <<'JSON'
   {
     "Version": "2012-10-17",
     "Statement": [
-      {
-        "Effect": "Allow",
-        "Action": ["s3:*"],
-        "Resource": [
-          "arn:aws:s3:::loki",
-          "arn:aws:s3:::loki/*"
-        ]
-      }
+      { "Effect": "Allow", "Action": ["s3:*"],
+        "Resource": ["arn:aws:s3:::loki", "arn:aws:s3:::loki/*"] }
     ]
   }
+  JSON
+
+  mc admin accesskey create myaistor --policy /tmp/loki-policy.json   # prints Access Key + Secret Key
+  rm -f /tmp/loki-policy.json
   ```
 
 The S3 API endpoint is **`https://nas1.lab.yo61.net:30320`** (valid cert, so Loki
@@ -77,7 +78,6 @@ and **persists across cluster rebuilds**, so this is a one-time step (re-run onl
 rotate). ESO then projects it into the `loki-s3` Secret the Loki HelmRelease reads.
 
 ```bash
-unset OP_SERVICE_ACCOUNT_TOKEN        # use the personal 1Password (Private vault)
 export BAO_ADDR=http://192.168.20.10:8200
 bao login
 ./scripts/sync-loki-secrets.sh        # writes kv/loki-s3

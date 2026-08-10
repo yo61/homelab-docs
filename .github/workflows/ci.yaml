@@ -29,12 +29,25 @@ jobs:
   # Run the same pre-commit hooks contributors run locally
   # (.pre-commit-config.yaml). commitlint is at the commit-msg stage
   # and is skipped by `prek run` automatically.
+  #
+  # pnpm install comes first because the oxfmt and oxlint hooks are
+  # `language: system` and shell out to pnpm — without node_modules they
+  # fail to run rather than reporting a clean tree.
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
       - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
         with:
           prek-version: 0.4.13

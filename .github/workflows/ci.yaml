@@ -26,17 +26,40 @@ jobs:
       - run: pnpm build
       - run: pnpm types:check
 
-  markdownlint:
+  # Run the same pre-commit hooks contributors run locally
+  # (.pre-commit-config.yaml). commitlint is at the commit-msg stage
+  # and is skipped by `prek run` automatically.
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      # Globs are passed here rather than via .markdownlint-cli2.jsonc, because
-      # cli2 merges config globs with command-line paths — which would make the
-      # pre-commit hook lint the whole repo instead of just the staged files.
-      - uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff  # v24.2.0
+      - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece  # v3.0.0
         with:
-          globs: |
-            **/*.md
-            **/*.mdx
+          prek-version: 0.4.13
+
+  # The gitleaks pre-commit hook runs `gitleaks git --pre-commit --staged`, which
+  # diffs the index against HEAD. On a fresh checkout those are identical, so the
+  # hook is a silent no-op under `prek run --all-files` and cannot gate anything.
+  # Scan the working tree explicitly instead.
+  #
+  # Uses the MIT-licensed CLI directly rather than gitleaks-action, which has been
+  # proprietary since v2.0.0 and requires a GITLEAKS_LICENSE secret for
+  # organisation accounts.
+  #
+  # The image is pinned by digest (= v8.30.1) for the same reason actions are
+  # pinned by SHA. Bump it alongside the gitleaks `rev:` in
+  # .pre-commit-config.yaml so local and CI scan with the same rules.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan working tree for secrets
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            dir /repo --redact --verbose

@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "import", "unicorn", "react"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn",
+    "style": "off"
+  },
+  "rules": {
+    "no-console": "error",
+    "no-debugger": "error",
+    // Next.js 16 / React 19 use the automatic JSX runtime, so JSX compiles to
+    // jsx() from react/jsx-runtime rather than React.createElement. `React` does
+    // not need to be in scope, and importing it just to satisfy this rule would
+    // add a dead import to every component.
+    "react/react-in-jsx-scope": "off",
+    // `import './global.css'` is how Next.js loads global styles — the side
+    // effect is the point. Allow bare stylesheet imports, keep the rule for JS.
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }]
+  },
+  "env": { "browser": true, "node": true, "es2024": true },
+  "ignorePatterns": ["node_modules", ".next", "out", ".source"]
+}

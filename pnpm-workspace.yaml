@@ -22,10 +22,10 @@ overrides:
   # inside pnpm's minimumReleaseAge window, so a fresh resolution fails CI.
   # Remove once 4.4.3 has aged past the cutoff.
   shiki: 4.3.1
-  '@shikijs/core': 4.3.1
-  '@shikijs/engine-javascript': 4.3.1
-  '@shikijs/engine-oniguruma': 4.3.1
-  '@shikijs/langs': 4.3.1
-  '@shikijs/primitive': 4.3.1
-  '@shikijs/themes': 4.3.1
-  '@shikijs/types': 4.3.1
+  "@shikijs/core": 4.3.1
+  "@shikijs/engine-javascript": 4.3.1
+  "@shikijs/engine-oniguruma": 4.3.1
+  "@shikijs/langs": 4.3.1
+  "@shikijs/primitive": 4.3.1
+  "@shikijs/themes": 4.3.1
+  "@shikijs/types": 4.3.1

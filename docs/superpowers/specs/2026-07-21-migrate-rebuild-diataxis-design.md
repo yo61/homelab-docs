@@ -44,6 +44,7 @@ SERVICES.md, knowledge/, decisions/) in later slices.
 ## Content handling
 
 ### how-to/rebuild-the-cluster.mdx
+
 - Lean, scannable spine: a **Prerequisites** block (talsecret restored, OpenBao
   unsealed, Flux App creds, tooling), then **Phases 0–4** as numbered command
   steps with only point-of-act notes.
@@ -57,21 +58,25 @@ SERVICES.md, knowledge/, decisions/) in later slices.
   prominent warnings — the "human go-ahead" rule is operational, not decorative.
 
 ### reference/environment.mdx
+
 - The *Environment* facts and *Key files* table, near-verbatim, as lookup tables.
 - Version facts (Talos v1.13.6, k8s v1.36.2, Cilium floor/target) cross-checked
   against the live config at authoring time.
 
 ### explanation/cilium-day0-day2.mdx
+
 - The two-layer model: why day-0 is an inline manifest, how the Flux HelmRelease
   adopts it (helm-controller default take-ownership), floor==target normally /
   convergence when they differ. Draws on flux-homelab `knowledge/cilium/`.
 
 ### explanation/talos-rebuild-gotchas.mdx
+
 - One section per gotcha with a stable anchor (e.g. `#lacp`, `#podsecurity`,
   `#iscsi-iqn`, `#pending-install`) so the how-to can deep-link. Each: symptom,
   why it happens, the declarative fix already in the repo.
 
 ### Nav (meta.json)
+
 - Add `rebuild-the-cluster` to `how-to/meta.json`, `environment` to
   `reference/meta.json`, and `cilium-day0-day2` + `talos-rebuild-gotchas` to
   `explanation/meta.json`. Existing placeholders stay.
@@ -80,7 +85,7 @@ SERVICES.md, knowledge/, decisions/) in later slices.
 
 - Remove `REBUILD.md`.
 - Add to `flux-homelab/README.md`: *"Rebuild / operate the cluster →
-  https://yo61.github.io/homelab-docs/ (how-to guides)."*
+  <https://yo61.github.io/homelab-docs/> (how-to guides)."*
 - The rebuild is still run from a flux-homelab checkout; the guide is read from
   the public site (commands reference the repo's `./talos/`, `./clusterconfig/`).
 

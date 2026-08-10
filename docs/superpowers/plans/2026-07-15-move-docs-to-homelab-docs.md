@@ -1,6 +1,8 @@
 # Move Fumadocs Site to homelab-docs — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Relocate the reviewed Fumadocs site from `flux-homelab`'s
 `docs/fumadocs-site` branch into a new standalone repo `../homelab-docs` (site at
@@ -22,7 +24,8 @@ pnpm; GitHub Actions; prek.
 
 ## Paths (used throughout)
 
-- `FLUX` = `/Users/robin/code/github.com/yo61/flux-homelab` (current repo, on branch `docs/fumadocs-site`)
+- `FLUX` = `/Users/robin/code/github.com/yo61/flux-homelab` (current repo, on branch
+  `docs/fumadocs-site`)
 - `DOCS` = `/Users/robin/code/github.com/yo61/homelab-docs` (new repo, created in Task 1)
 
 ## Global Constraints
@@ -33,10 +36,13 @@ pnpm; GitHub Actions; prek.
 - **gitConfig:** `{ user: 'yo61', repo: 'homelab-docs', branch: 'main' }`.
 - **Site at repo root** — no `docs/site/` nesting.
 - **Fresh git history** — no filtering of the flux-homelab branch.
-- **Do NOT push and do NOT create the GitHub remote** — Robin's IaC owns that. End state is a clean local repo ready to push.
+- **Do NOT push and do NOT create the GitHub remote** — Robin's IaC owns that. End state is a clean
+  local repo ready to push.
 - **Pinned versions preserved** — `package.json` + `pnpm-lock.yaml` move verbatim; no `pnpm update`.
 - **Licensing:** MIT for code (`LICENSE`), CC-BY-4.0 for `content/docs/` prose (`LICENSE-docs`).
-- **Design docs that move (docs-site only):** `specs/2026-07-14-docs-site-fumadocs-design.md`, `specs/2026-07-15-move-docs-to-homelab-docs-design.md`, `plans/2026-07-14-docs-site-fumadocs.md`, `plans/2026-07-15-move-docs-to-homelab-docs.md`. The external-dns spec/plan do **NOT** move.
+- **Design docs that move (docs-site only):** `specs/2026-07-14-docs-site-fumadocs-design.md`,
+  `specs/2026-07-15-move-docs-to-homelab-docs-design.md`, `plans/2026-07-14-docs-site-fumadocs.md`,
+  `plans/2026-07-15-move-docs-to-homelab-docs.md`. The external-dns spec/plan do **NOT** move.
 - **flux-homelab `main` must stay at `f8f4040`** — untouched.
 - **Zero warnings:** `pnpm build` and `pnpm types:check` finish clean before a task is done.
 
@@ -69,13 +75,18 @@ Plumbing and design docs come in later tasks.
 
 **Working repo:** `DOCS` (created here)
 **Files:**
+
 - Create repo `DOCS` via `git init`
 - Populate from `FLUX` `git archive docs/fumadocs-site:docs/site`
 - Adapt: `DOCS/next.config.mjs`, `DOCS/lib/shared.ts`, `DOCS/app/(docs)/[[...slug]]/page.tsx`
 
 **Interfaces:**
-- Produces for Task 2: buildable site at `DOCS` root; `pnpm install --frozen-lockfile` + `pnpm build` (→ `DOCS/out`) + `pnpm types:check` all clean; the site's `.gitignore` is at `DOCS/.gitignore`.
-- Produces for Task 3: content source dir is `content/docs`; design docs land under `DOCS/docs/superpowers/`.
+
+- Produces for Task 2: buildable site at `DOCS` root; `pnpm install --frozen-lockfile` +
+  `pnpm build` (→ `DOCS/out`) + `pnpm types:check` all clean; the site's `.gitignore` is at
+  `DOCS/.gitignore`.
+- Produces for Task 3: content source dir is `content/docs`; design docs land under
+  `DOCS/docs/superpowers/`.
 
 - [ ] **Step 1: Create and populate the repo (tracked files only, no generated dirs)**
 
@@ -231,10 +242,15 @@ whole tree.
 
 **Working repo:** `DOCS`
 **Files:**
-- Create: `DOCS/LICENSE`, `DOCS/LICENSE-docs`, `DOCS/README.md` (overwrite), `DOCS/CLAUDE.md`, `DOCS/.pre-commit-config.yaml`, `DOCS/.github/dependabot.yml`, `DOCS/.github/workflows/deploy.yaml`, `DOCS/.github/workflows/ci.yaml`
+
+- Create: `DOCS/LICENSE`, `DOCS/LICENSE-docs`, `DOCS/README.md` (overwrite), `DOCS/CLAUDE.md`,
+  `DOCS/.pre-commit-config.yaml`, `DOCS/.github/dependabot.yml`,
+  `DOCS/.github/workflows/deploy.yaml`, `DOCS/.github/workflows/ci.yaml`
 
 **Interfaces:**
-- Consumes from Task 1: buildable site with `pnpm install --frozen-lockfile` / `pnpm build` → `out`; lockfile at `DOCS/pnpm-lock.yaml`.
+
+- Consumes from Task 1: buildable site with `pnpm install --frozen-lockfile` / `pnpm build` → `out`;
+  lockfile at `DOCS/pnpm-lock.yaml`.
 
 - [ ] **Step 1: `LICENSE` (MIT)**
 
@@ -324,6 +340,7 @@ type-checks every pull request.
 - **Code** — MIT, see [`LICENSE`](LICENSE).
 - **Documentation content** under `content/docs/` — Creative Commons
   Attribution 4.0 International (CC-BY-4.0), see [`LICENSE-docs`](LICENSE-docs).
+
 ```
 
 - [ ] **Step 4: `CLAUDE.md`**
@@ -584,10 +601,16 @@ spec/plan are NOT moved.
 
 **Working repo:** `DOCS` (reads files from `FLUX`)
 **Files:**
-- Create: `DOCS/docs/superpowers/specs/2026-07-14-docs-site-fumadocs-design.md`, `DOCS/docs/superpowers/specs/2026-07-15-move-docs-to-homelab-docs-design.md`, `DOCS/docs/superpowers/plans/2026-07-14-docs-site-fumadocs.md`, `DOCS/docs/superpowers/plans/2026-07-15-move-docs-to-homelab-docs.md`
+
+- Create: `DOCS/docs/superpowers/specs/2026-07-14-docs-site-fumadocs-design.md`,
+  `DOCS/docs/superpowers/specs/2026-07-15-move-docs-to-homelab-docs-design.md`,
+  `DOCS/docs/superpowers/plans/2026-07-14-docs-site-fumadocs.md`,
+  `DOCS/docs/superpowers/plans/2026-07-15-move-docs-to-homelab-docs.md`
 
 **Interfaces:**
-- Consumes from Task 1: `content/docs` is the only build source, so `docs/superpowers/` is inert to the site build.
+
+- Consumes from Task 1: `content/docs` is the only build source, so `docs/superpowers/` is inert to
+  the site build.
 
 - [ ] **Step 1: Copy the four design docs**
 
@@ -647,7 +670,9 @@ everything out of the branch.
 **Files:** none created; branch + PR removed.
 
 **Interfaces:**
-- Consumes from Tasks 1–3: the site and all four design docs already exist in `DOCS`, so the branch is safe to delete.
+
+- Consumes from Tasks 1–3: the site and all four design docs already exist in `DOCS`, so the branch
+  is safe to delete.
 
 - [ ] **Step 1: Safety check — confirm the work is preserved in homelab-docs**
 
@@ -707,17 +732,21 @@ gh pr view 29 --json state,title -q '.state + " — " + .title'   # expect: CLOS
 ## Self-Review (against the spec)
 
 **Spec coverage:**
+
 - Move scope = site only → Tasks 1–2 move the site; root prose never touched. ✓
 - Site at root → Task 1 Step 1 (`git archive <tree>:docs/site` extracts at root). ✓
 - basePath `/homelab-docs`, gitConfig repo, edit-on-GitHub path → Task 1 Steps 2–4. ✓
 - Project Pages, env-overridable basePath → Task 1 Step 2 (`BASE_PATH ?? '/homelab-docs'`). ✓
 - Fresh git history → Task 1 Step 1 (`git init`; archive carries no history). ✓
-- IaC owns remote; ready-to-push, no push → Task 3 end state; no `gh repo create`/`git push` anywhere. ✓
-- flux-homelab cleanup, main untouched → Task 4 (checkout main, close #29, delete branch, verify f8f4040). ✓
+- IaC owns remote; ready-to-push, no push → Task 3 end state; no `gh repo create`/`git push`
+  anywhere. ✓
+- flux-homelab cleanup, main untouched → Task 4 (checkout main, close #29, delete branch, verify
+  f8f4040). ✓
 - Dual license MIT + CC-BY-4.0 → Task 2 Steps 1–2 (+ README/CLAUDE license notes). ✓
 - Plumbing (pre-commit, dependabot, deploy, ci, README, CLAUDE, LICENSE, LICENSE-docs) → Task 2. ✓
 - Design docs move (docs-site only, not external-dns) → Task 3 Step 1 (explicit file list). ✓
-- Verification: build, browser, actionlint/zizmor, prek → Task 1 Steps 5–6 + controller browser note; Task 2 Step 9. ✓
+- Verification: build, browser, actionlint/zizmor, prek → Task 1 Steps 5–6 + controller browser
+  note; Task 2 Step 9. ✓
 
 **Placeholder scan:** No TBD/TODO. The only fetched content (CC-BY-4.0 text, Task 2
 Step 2) is deliberately fetched with verification rather than transcribed; the

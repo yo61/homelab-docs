@@ -2,7 +2,7 @@
 
 Fumadocs (Next.js static export) documentation site for the flux-homelab
 Kubernetes cluster, structured on the [Diátaxis](https://diataxis.fr/) system
-and published to GitHub Pages at https://yo61.github.io/homelab-docs/.
+and published to GitHub Pages at <https://yo61.github.io/homelab-docs/>.
 
 ## Develop
 

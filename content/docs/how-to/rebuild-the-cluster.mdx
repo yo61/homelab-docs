@@ -95,6 +95,7 @@ IPs, but the nodes are on their transient DHCP IPs. Print, then run each with it
 ```bash
 talhelper gencommand apply --extra-flags=--insecure   # PRINTS one apply per node
 ```
+
 ```bash
 talosctl apply-config --talosconfig=./clusterconfig/talosconfig \
   --nodes=<dhcp-ip> --file=./clusterconfig/homelab-k8s-0N.yaml --insecure
@@ -137,8 +138,8 @@ If the apiserver crashloops here, it's usually the
 
 ## Phase 3 — Flux + the out-of-band secrets
 
-A from-scratch cluster bootstrap against the existing repo, via the Flux Operator
-+ a `FluxInstance` (GitHub App auth). The `BOOTSTRAP.md` runbook in the repo has
+A from-scratch cluster bootstrap against the existing repo, via the Flux Operator +
+a `FluxInstance` (GitHub App auth). The `BOOTSTRAP.md` runbook in the repo has
 fuller detail; the rebuild-specific order:
 
 ```bash

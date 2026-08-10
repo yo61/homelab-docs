@@ -87,7 +87,7 @@ subtree; app/components/lib logic and the content are otherwise identical.
   `main` unchanged). `appName` stays `'Homelab GitOps'`.
 - **`app/(docs)/[[...slug]]/page.tsx`:** the ViewOptions `githubUrl` drops the
   `docs/site/` path prefix:
-  `` `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}` ``
+  `` `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}` `` <!-- markdownlint-disable-line MD013 -- one code span, no wrap point -->
   (was `.../docs/site/content/docs/${page.path}`).
 - **`.gitignore`:** the site's `.gitignore` (node_modules, `.next`, `.source`,
   `out`, `*.tsbuildinfo`, `next-env.d.ts`) becomes the repo-**root** `.gitignore`.

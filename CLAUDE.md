@@ -7,11 +7,11 @@ Guidance for Claude Code when working in this repository.
 Fumadocs (Next.js **static export**) documentation site for the flux-homelab
 Kubernetes cluster, structured on the Diátaxis system (`tutorials/`, `how-to/`,
 `reference/`, `explanation/`). Published to GitHub Pages at
-https://yo61.github.io/homelab-docs/ with basePath `/homelab-docs`.
+<https://yo61.github.io/homelab-docs/> with basePath `/homelab-docs`.
 
 ## Commands
 
-- `pnpm dev` — dev server at http://localhost:3000/homelab-docs
+- `pnpm dev` — dev server at <http://localhost:3000/homelab-docs>
 - `pnpm build` — static export to `./out`
 - `pnpm types:check` — fumadocs-mdx + next typegen + tsc --noEmit
 - `prek run --all-files` — run the git hooks

@@ -84,50 +84,73 @@ kubectl get externalsecrets -A                    # SecretSynced
 kubectl get storageclass                          # truenas-iscsi present
 ```
 
-## 5. Clean up ghost pods
+## 5. Ghost pods (normally already handled)
 
-A hard power loss leaves **tombstone pods** behind. When a node loses power, its
-kubelet can't gracefully evict; on reboot it marks the pods it *had* been running
-as `Failed` instead of deleting them. The controllers already replaced them with
-fresh `Running` pods, so nothing ever cleans up the corpses — they just linger in
-`kubectl get pods` as `ContainerStatusUnknown` or `Error`.
+A node that stops running pods leaves **tombstone pods** behind: pod objects whose
+controller has already replaced them, but which nothing ever deletes. They linger
+in `kubectl get pods` looking like failures.
+
+An hourly CronJob — `pod-tombstone-gc` in `kube-system`, defined in `flux-homelab`
+— sweeps them up, so this clears itself within the hour and there's usually
+**nothing to do here**. Read on if you don't want to wait, or want to check the
+sweeper is earning its keep.
+
+A node going away leaves tombstones in **two** different phases, and the
+distinction matters because each needs a different filter:
+
+| Phase | Left by | Shows as |
+| --- | --- | --- |
+| `Failed` | An **ungraceful** loss — a power cut. The kubelet gets no shutdown signal, so on reboot it marks the pods it *had* been running `Failed` rather than deleting them. | `ContainerStatusUnknown`, `Error`; reason `NodeShutdown` |
+| `Succeeded` | An **orderly** shutdown — `talosctl reboot`, `talosctl upgrade`, a [`kubectl drain`](/how-to/drain-a-node). The containers are sent `SIGTERM`; one that handles it and exits 0 ends up here. | `Completed` |
 
 <Callout type="info">
   Talos enables Kubernetes [Graceful Node Shutdown](https://www.talos.dev/latest/learn-more/knowledge-base/)
-  by default (20 s regular / 10 s critical pods), which is why *orderly* reboots
-  — `talosctl reboot`, `talosctl upgrade`, a [`kubectl drain`](/how-to/drain-a-node)
-  — don't produce these. A power cut delivers no shutdown signal, so that handler
-  never runs and tuning the grace period can't prevent it. The only thing that
-  turns a power cut into an orderly shutdown is a UPS that signals the nodes to
-  shut down before the battery dies; without one, expect ghosts and clear them
-  below.
+  by default (20 s regular / 10 s critical pods). That makes an orderly reboot
+  *clean*, but it does **not** make it tombstone-free: it `SIGTERM`s the
+  containers rather than deleting the pod objects, so a well-behaved container
+  that exits 0 leaves a `Succeeded` pod behind. A power cut delivers no shutdown
+  signal at all, so that handler never runs and no grace-period value can prevent
+  it — the only thing that turns a power cut into an orderly shutdown is a UPS
+  that signals the nodes before the battery dies.
 </Callout>
 
-Find them — every one is phase `Failed` with reason `NodeShutdown`:
+Only **Deployment-managed** pods pile up. The DaemonSet and StatefulSet
+controllers delete terminal pods and recreate them; the ReplicaSet controller
+merely stops counting one as active and creates a replacement, leaving the
+tombstone parented to a ReplicaSet that keeps it alive indefinitely. Kubernetes'
+own pod GC is no help either: its `--terminated-pod-gc-threshold` defaults to
+12500, a count a three-node cluster never reaches.
+
+Find them:
 
 ```bash
-kubectl get pods -A --field-selector status.phase=Failed        # the ghost list
-kubectl get pods -A --field-selector status.phase=Failed \
-  -o jsonpath='{range .items[*]}{.status.reason}{"\n"}{end}' | sort | uniq -c
+kubectl get pods -A --field-selector status.phase=Failed        # power-cut ghosts
+kubectl get pods -A --field-selector status.phase=Succeeded \
+  -l pod-template-hash                                          # orderly-reboot ghosts
 ```
 
-Delete them all:
+Clear them without waiting for the next sweep — these are exactly what the
+CronJob runs:
 
 ```bash
 kubectl delete pods -A --field-selector status.phase=Failed
+kubectl delete pods -A --field-selector status.phase=Succeeded -l pod-template-hash
 ```
 
 <Callout type="info">
-  Use the **field selector**, not a name-grep. `status.phase=Failed` is evaluated
-  server-side and structurally can't match a `Running` pod, so it only ever removes
-  tombstones. Deleting them is safe because they're controller-owned (Deployments,
-  ReplicaSets) whose desired replica count is already satisfied — you're removing a
-  dead etcd object, not a live workload. Confirm that first with
-  `kubectl get deploy -A` showing each `READY` at full count.
+  Use the **field selector**, not a name-grep: it's evaluated server-side and
+  structurally can't match a `Running` pod, so it only ever removes tombstones.
+  The `Succeeded` sweep needs the extra `-l pod-template-hash` because — unlike
+  `Failed` — `Succeeded` is a perfectly normal resting state, for Job pods and for
+  Last Light's sandbox pods. That label is set by the Deployment controller on
+  ReplicaSet-managed pods and only those, so it spares both. Deleting a
+  `Succeeded` Deployment pod is safe by construction: its `restartPolicy` is
+  `Always`, so a container exiting 0 would be *restarted* rather than ending the
+  pod — the only route to `Succeeded` is the kubelet ceasing to manage it.
 </Callout>
 
 <Callout type="warn">
-  This clears `Failed` pods, not stuck `Terminating` ones. A stateful pod on a
+  This clears *terminal* pods, not stuck `Terminating` ones. A stateful pod on a
   `truenas-iscsi` PVC can hang `Terminating` after a hard node loss because its
   `VolumeAttachment` never detached. That's a different fix (check
   `kubectl get volumeattachment`) — don't force-delete it, or the PVC may

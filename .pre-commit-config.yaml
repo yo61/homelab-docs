@@ -37,6 +37,24 @@ repos:
         types: [text]
         types_or: [markdown, mdx]
 
+  - repo: local
+    hooks:
+      - id: oxfmt
+        name: oxfmt --check
+        entry: pnpm format:check
+        language: system
+        # oxfmt formats YAML, JSON and CSS as well as TS/JS, so a config- or
+        # style-only commit must run it too or it passes locally and fails CI.
+        # Prose is excluded via .prettierignore — markdownlint owns that.
+        types_or: [ts, tsx, javascript, jsx, yaml, json, css]
+        pass_filenames: false
+      - id: oxlint
+        name: oxlint
+        entry: pnpm lint
+        language: system
+        types_or: [ts, tsx, javascript, jsx]
+        pass_filenames: false
+
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:

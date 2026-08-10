@@ -1,0 +1,15 @@
+# Used by oxfmt (oxfmt reads .gitignore and .prettierignore by default).
+# Keep oxfmt to source and config.
+
+node_modules/
+.next/
+out/
+.source/
+
+# Lockfiles
+pnpm-lock.yaml
+
+# Prose is owned by markdownlint (.markdownlint.jsonc) and, for content/, by the
+# MDX build. Letting a code formatter reflow it would fight both.
+content/
+docs/

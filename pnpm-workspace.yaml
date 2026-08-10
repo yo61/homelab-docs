@@ -18,14 +18,15 @@ overrides:
   fast-uri@<3.1.5: ^3.1.5
   sharp@<0.35.0: ^0.35.3
 
-  # Temporary hold. fumadocs-core@16.14.0 allows ^4.3.1, and 4.4.3 was published
-  # inside pnpm's minimumReleaseAge window, so a fresh resolution fails CI.
-  # Remove once 4.4.3 has aged past the cutoff.
-  shiki: 4.3.1
-  "@shikijs/core": 4.3.1
-  "@shikijs/engine-javascript": 4.3.1
-  "@shikijs/engine-oniguruma": 4.3.1
-  "@shikijs/langs": 4.3.1
-  "@shikijs/primitive": 4.3.1
-  "@shikijs/themes": 4.3.1
-  "@shikijs/types": 4.3.1
+  # Temporary hold. fumadocs-core requires shiki ^4.4.1 from 16.14.1 onward, and
+  # 4.4.3 was published inside pnpm's minimumReleaseAge window, so a fresh
+  # resolution fails CI. 4.4.2 satisfies the range and is old enough.
+  # Remove once 4.4.3 has aged past the cutoff; shiki then floats again.
+  shiki: 4.4.2
+  "@shikijs/core": 4.4.2
+  "@shikijs/engine-javascript": 4.4.2
+  "@shikijs/engine-oniguruma": 4.4.2
+  "@shikijs/langs": 4.4.2
+  "@shikijs/primitive": 4.4.2
+  "@shikijs/themes": 4.4.2
+  "@shikijs/types": 4.4.2

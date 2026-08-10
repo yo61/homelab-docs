@@ -7,3 +7,14 @@ overrides:
   brace-expansion@<1.1.16: 1.1.16
   fast-uri@<3.1.4: 3.1.4
   sharp@<0.35.0: 0.35.3
+  # Pin shiki/@shikijs/* to the previously-vetted patch: fumadocs-core@16.14.0
+  # allows ^4.3.1, and 4.4.3 trips pnpm's minimumReleaseAge policy (published
+  # <24h before CI runs). Remove once 4.4.3 has aged past the cutoff.
+  shiki: 4.3.1
+  '@shikijs/core': 4.3.1
+  '@shikijs/engine-javascript': 4.3.1
+  '@shikijs/engine-oniguruma': 4.3.1
+  '@shikijs/langs': 4.3.1
+  '@shikijs/primitive': 4.3.1
+  '@shikijs/themes': 4.3.1
+  '@shikijs/types': 4.3.1

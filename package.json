@@ -12,7 +12,6 @@
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
-    "@orama/orama": "^3.1.18",
     "fumadocs-core": "16.14.0",
     "fumadocs-mdx": "15.2.2",
     "fumadocs-ui": "16.14.0",
@@ -20,7 +19,8 @@
     "next": "16.2.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "tailwind-merge": "^3.6.0"
+    "tailwind-merge": "^3.6.0",
+    "zbsearch": "^3.3.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

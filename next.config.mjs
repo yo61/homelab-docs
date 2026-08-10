@@ -1,14 +1,14 @@
-import { createMDX } from 'fumadocs-mdx/next';
+import { createMDX } from "fumadocs-mdx/next";
 
 const withMDX = createMDX();
 
-const basePath = process.env.BASE_PATH ?? '/homelab-docs';
-const siteUrl = process.env.SITE_URL ?? 'https://yo61.github.io';
+const basePath = process.env.BASE_PATH ?? "/homelab-docs";
+const siteUrl = process.env.SITE_URL ?? "https://yo61.github.io";
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  output: 'export',
+  output: "export",
   basePath,
   // Expose basePath + siteUrl to client AND server bundles. Used by:
   //   - components/search.tsx: prefix the static-search fetch URL

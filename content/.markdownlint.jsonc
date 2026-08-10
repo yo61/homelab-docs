@@ -1,6 +1,17 @@
 {
-  // Inherits the repo-wide rules; only the MDX-specific opt-out lives here.
+  // Inherits the repo-wide rules; only the MDX-specific opt-outs live here.
   "extends": "../.markdownlint.jsonc",
+
+  // MD034's fix wraps a bare URL in angle brackets (`<www.example.org>`), which
+  // is a CommonMark autolink but is parsed as JSX by MDX — an unclosed tag that
+  // fails the build:
+  //
+  //   Expected a closing tag for `<www.example.org>` before the end of `paragraph`
+  //
+  // No page trips it today; the rule is disabled here so that the first bare URL
+  // someone adds doesn't get "fixed" into a broken build. It stays enabled for
+  // the plain markdown under docs/ and at the repo root, where it is safe.
+  "MD034": false,
 
   // Fumadocs custom heading anchors are written `## Heading [#custom-id]`.
   // markdownlint only understands the `{#custom-id}` form, so it slugifies the

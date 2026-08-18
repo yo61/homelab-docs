@@ -19,7 +19,9 @@ desyncs its view of the app and dataset. Addresses and paths are in
 <Callout type="info">
   The cluster's control plane comes back and workloads that don't use NAS storage
   keep working **even while OpenBao is still sealed** — existing Kubernetes Secrets
-  persist; only External Secrets Operator *refreshes* pause. **Workloads backed by
+  persist; only External Secrets Operator *refreshes* pause, and they resume on their
+  own once you unseal, though [not instantly](#4-skip-the-wait-optional).
+  **Workloads backed by
   a NAS PVC (Loki, Prometheus, Grafana, …) won't function until the NAS storage is
   available.** There's no rush on the unseal itself: let the cluster settle, then
   do the steps below.
@@ -72,19 +74,106 @@ bao status                 # Sealed = false
 ```
 
 Unsealing is idempotent — a mistyped key just doesn't count toward the threshold;
-rerun it. You don't need to touch ESO or Flux: once OpenBao is unsealed, ESO
-re-reads the store on its next reconcile.
+rerun it. You don't *have* to touch ESO or Flux — once OpenBao is unsealed both
+recover unattended — but after a long outage that lags the unseal by up to ~20
+minutes, which looks a lot like being stuck. [Step 4](#4-skip-the-wait-optional)
+explains why, and how to skip it.
 
-## 4. Verify
+## 4. Skip the wait (optional)
+
+Everything here is a **shortcut, not a repair**. The cluster reaches the same state
+on its own; these commands just stop you waiting for it, and let you confirm the
+recovery now rather than watching `SecretSyncedError` for a quarter of an hour and
+wondering what else is broken.
+
+### ESO: store is `Valid` but the secrets aren't
+
+The signature of a *successful* unseal that hasn't propagated yet is a healthy store
+alongside failing secrets:
+
+```bash
+kubectl get clustersecretstore homelab-openbao   # Valid / True
+kubectl get externalsecrets -A                   # SecretSyncedError
+```
+
+That pairing is expected and self-correcting, because ESO runs **two independent
+reconcile loops on different clocks**. The store controller re-validates every ~7 min
+and so recovers promptly; each ExternalSecret retries on controller-runtime's
+exponential backoff, which **caps at ~16m40s**. After a multi-hour outage every
+ExternalSecret has failed enough times to be pinned at that ceiling, so they trail the
+store by up to ~17 minutes. The ExternalSecret events say
+`ClusterSecretStore ... is not ready` even though the store now reports `Valid` — both
+are true, they're just reading different moments.
+
+Force every not-`Ready` ExternalSecret to re-read immediately:
+
+```bash
+kubectl get externalsecrets -A -o json \
+  | jq -r '.items[]
+           | select((.status.conditions[]? | select(.type=="Ready") | .status) != "True")
+           | "\(.metadata.namespace) \(.metadata.name)"' \
+  | while read -r ns name; do
+      kubectl annotate externalsecret -n "$ns" "$name" \
+        force-sync="$(date +%s)" --overwrite
+    done
+```
+
+Or one at a time — the annotation just has to *change*, and `force-sync` is the name
+ESO documents for this:
+
+```bash
+kubectl annotate externalsecret -n monitoring grafana-admin \
+  force-sync="$(date +%s)" --overwrite
+```
+
+Each one syncs in a few seconds.
+
+<Callout type="info">
+  Restarting the operator (`kubectl rollout restart deploy -n external-secrets
+  external-secrets`) also works, because the backoff state lives in an in-memory
+  workqueue that a new pod starts fresh. It's the bigger hammer for the same nail —
+  it drops the leader-election lease and re-reconciles all 11 secrets at once. The
+  annotation is targeted and doesn't need it.
+</Callout>
+
+### Flux: `infra-secrets` failing its health check
+
+`infra-secrets` runs with `wait: true` and a **5 m** timeout — shorter than ESO's
+~16m40s backoff — so during any OpenBao outage it reliably logs:
+
+```text
+HealthCheckFailed  timeout waiting for: [ClusterSecretStore/homelab-openbao
+status: 'InProgress', ExternalSecret/cert-manager/cloudflare-api-token status:
+'InProgress', ...]
+```
+
+It has `retryInterval: 2m`, so it clears itself within a couple of minutes of the
+ExternalSecrets going `SecretSynced` — you do not have to wait out its 1 h interval.
+To take it immediately:
+
+```bash
+flux reconcile kustomization infra-secrets
+flux get kustomizations              # all should reach Ready=True
+```
+
+<Callout type="warn">
+  **Order matters — fix the ExternalSecrets first.** `infra-secrets` gates
+  `infra-configs`, which gates `apps`. Reconciling it while its ExternalSecrets are
+  still in backoff just fails the same 5 m health check again and holds that chain
+  shut for another cycle.
+</Callout>
+
+## 5. Verify
 
 ```bash
 kubectl get nodes                                 # all Ready
 kubectl get clustersecretstore homelab-openbao    # Valid
 kubectl get externalsecrets -A                    # SecretSynced
 kubectl get storageclass                          # truenas-iscsi present
+flux get kustomizations                           # all Ready=True
 ```
 
-## 5. Ghost pods (normally already handled)
+## 6. Ghost pods (normally already handled)
 
 A node that stops running pods leaves **tombstone pods** behind: pod objects whose
 controller has already replaced them, but which nothing ever deletes. They linger

@@ -1,0 +1,207 @@
+---
+title: Upgrade Last Light
+description: Move the three lockstep pins to a new upstream release, or revert a fork RC to stock
+---
+
+Upgrading the `lastlight` app to a new `nearform/lastlight` release, or reverting
+a fork RC back to stock. `$VER` below is the target tag (e.g. `v0.25.9`).
+
+Three pins move **in lockstep, in one commit**. The manifests state this contract
+themselves and are authoritative over this page:
+
+| pin | file |
+| --- | --- |
+| agent image | `apps/lastlight/deployment.yaml` |
+| `sandbox.kubernetes.image` | `apps/lastlight/config.yaml` |
+| `deploy.version` | `apps/lastlight/config.yaml` |
+
+Both images are digest-pinned (`:$VER@sha256:…`). A stale `deploy.version` puts a
+false "redeploy needed" drift banner on the dashboard.
+
+## Prerequisites
+
+`gh`, `kustomize`, `kubectl` (context `admin@homelab`), `flux`, and `docker` (for
+`buildx imagetools`). A `nearform/lastlight` checkout with an `upstream` remote,
+for the content checks in Phase 1.
+
+## Phase 1 — Pick the release and check what moves
+
+```bash
+gh release view --repo nearform/lastlight --json tagName,publishedAt,name
+gh release list --repo nearform/lastlight --limit 6
+```
+
+<Callout type="warn">
+Don't reach for `git ls-remote --tags upstream | tail`. It sorts lexically, so
+the last line is `v0.9.0` — not the newest release.
+</Callout>
+
+If you are **reverting a fork RC**, prove its commits actually shipped upstream
+before dropping them. Squash-merges rewrite SHAs, so comparing by commit id lies:
+
+```bash
+git fetch upstream --tags && git fetch origin --tags
+
+# Misleading — lists fork commits as "missing" even when their content merged.
+git log --oneline "$VER..$VER-yo61.N"
+
+# Honest — diff the files those commits touched. Empty output means it landed.
+git diff --stat "$VER" "$VER-yo61.N" -- \
+  apps/server/src/cron/runner.ts apps/server/src/cron/handlers.ts
+
+# And confirm the upstream PR is an ancestor of the release.
+git merge-base --is-ancestor <pr-merge-sha> "$VER" && echo "IN $VER"
+```
+
+<Callout type="info">
+Fork tags are named for the version they are **destined for**, not the one they
+are built on — `v0.25.9-yo61.4` sat above release `v0.25.8`. An RC is therefore
+ahead of the last release and behind the next one at the same time.
+</Callout>
+
+Then check the config schema, because a key the harness rejects at startup is a
+crashloop:
+
+```bash
+git diff "$VER-yo61.N" "$VER" -- apps/server/src/config/config.ts
+git diff "$VER-yo61.N" "$VER" -- apps/server/config/default.yaml
+```
+
+New keys that default in `normalizeFileConfig` and are absent from our overlay
+need no change here.
+
+## Phase 2 — Resolve the digests
+
+```bash
+for img in lastlight-agent lastlight-sandbox; do
+  echo "=== $img ==="
+  docker buildx imagetools inspect "ghcr.io/nearform/$img:$VER" \
+    --format '{{.Manifest.Digest}}'
+done
+```
+
+This doubles as proof both images exist and are publicly pullable — the cluster
+carries no `imagePullSecret`.
+
+## Phase 3 — Move the three pins
+
+```bash
+cd ~/code/github.com/yo61/flux-homelab
+git checkout main && git pull --ff-only
+git checkout -b "chore/lastlight-$VER"
+```
+
+Edit the three pins listed at the top. When reverting an RC, **delete** the
+`TEMPORARY FORK RC` and `REVERT TO:` comment blocks rather than annotating them —
+a comment describing a state that no longer exists misleads the next reader.
+
+Nothing else needs touching on a revert to stock: `renovate.json5` hardcodes
+`ghcr.io/nearform/lastlight-(?:agent|sandbox)` with a `v[\d.]+` value pattern, so
+it resumes announcing releases by itself once both images are back on stock tags.
+
+## Phase 4 — Validate before pushing
+
+```bash
+git diff
+rg -n 'yo61/lastlight|yo61\.[0-9]' apps/lastlight/    # expect no matches
+kustomize build apps/ | rg 'lastlight-(agent|sandbox):|name: lastlight-config-'
+```
+
+Confirm the generated ConfigMap hash **changes** — that is what rolls the pod:
+
+```bash
+git stash && kustomize build apps/ | rg -m1 'name: lastlight-config-'
+git stash pop && kustomize build apps/ | rg -m1 'name: lastlight-config-'
+```
+
+<Callout type="warn">
+`apps/kustomization.yaml` hash-suffixes the `lastlight-config` ConfigMap on
+purpose. `deployment.yaml` mounts it with `subPath`, subPath mounts never pick up
+in-place ConfigMap updates, and the harness reads its config only at startup.
+Without a name change the config edit — including the sandbox image pin — is
+silently inert on a pod that looks healthy by every other signal.
+</Callout>
+
+## Phase 5 — Ship and reconcile
+
+```bash
+git add apps/lastlight/deployment.yaml apps/lastlight/config.yaml
+git commit      # prek runs kustomize build + kubeconform + conventional-commit
+git push -u origin "chore/lastlight-$VER"
+gh pr create --title "chore(lastlight): deploy stock upstream $VER" --body "…"
+gh pr checks <PR> --watch --interval 15
+gh pr merge <PR> --squash --delete-branch
+
+git checkout main && git pull --ff-only
+flux reconcile kustomization apps --with-source
+kubectl -n lastlight rollout status deploy/lastlight --timeout=5m
+```
+
+`last-light/review` is one of the required checks — the running harness reviews
+the PR that replaces it.
+
+<Callout type="info">
+The Deployment strategy is `Recreate` (single embedded-SQLite writer on an RWO
+PVC), so the old pod terminates before the new one starts. A short gap is
+expected, and `0 of 1 updated replicas are available` mid-roll is normal.
+</Callout>
+
+## Phase 6 — Verify
+
+```bash
+# What is running, and the digest it actually resolved to
+kubectl -n lastlight get pod -l app=lastlight \
+  -o jsonpath='{.items[0].spec.containers[0].image}{"\n"}'
+kubectl -n lastlight get pod -l app=lastlight \
+  -o jsonpath='{.items[0].status.containerStatuses[0].imageID}{"\n"}'
+
+# The new hashed ConfigMap is the one mounted
+kubectl -n lastlight get pod -l app=lastlight \
+  -o jsonpath='{range .items[0].spec.volumes[*]}{.configMap.name}{"\n"}{end}' \
+  | rg lastlight-config
+
+# The sandbox pin and deploy.version the harness will actually read
+kubectl -n lastlight get cm <lastlight-config-HASH> \
+  -o jsonpath='{.data.config\.yaml}' | rg -n 'image:|version:' | rg -v '^\s*#'
+
+# Clean boot: backend, skills, crons, listener — and no errors
+kubectl -n lastlight logs -l app=lastlight --tail=200 \
+  | rg -i 'version|sandbox backend|listening|error|fatal'
+
+kubectl -n lastlight port-forward deploy/lastlight 18644:8644 &
+curl -sS --max-time 10 http://127.0.0.1:18644/health     # {"status":"ok"}
+```
+
+Drift-banner check — `deploy.version` must resolve to the commit the running
+image was built from. The harness runs `git ls-remote nearform/lastlight
+refs/tags/<pin>*` and prefers the peeled `^{}` line:
+
+```bash
+git ls-remote https://github.com/nearform/lastlight "refs/tags/$VER*"
+```
+
+Two lines come back. The bare `refs/tags/$VER` line is the annotated **tag
+object**, not the commit; the `^{}` line is, and it must equal
+`git rev-parse "$VER^{commit}"`. The same information is on
+`/admin/api/server/info`, but that is auth-gated and this check is not.
+
+The sandbox image is not exercised until the next workflow runs — Phase 2's
+`imagetools inspect` is the pre-flight proof. To confirm end-to-end, watch a
+sandbox pod start:
+
+```bash
+kubectl -n lastlight-sandboxes get pods -w
+```
+
+`Completed` pods there are retained tombstones, not failures.
+
+## Rollback
+
+The deploy is a git revert, so nothing here is destructive. Both images stay in
+GHCR, so the previous digests in the reverted diff remain pullable.
+
+```bash
+git revert <merge-sha>     # via a PR, same as any other change
+flux reconcile kustomization apps --with-source
+kubectl -n lastlight rollout status deploy/lastlight --timeout=5m
+```

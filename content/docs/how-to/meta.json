@@ -6,6 +6,7 @@
     "recover-from-a-power-cut",
     "drain-a-node",
     "add-a-new-service",
-    "set-up-logging"
+    "set-up-logging",
+    "upgrade-last-light"
   ]
 }

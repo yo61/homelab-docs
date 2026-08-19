@@ -18,6 +18,11 @@ overrides:
   fast-uri@<3.1.5: ^3.1.5
   sharp@<0.35.0: ^0.35.3
 
+  # Compatibility override. fumadocs-core 16.14.3 still declares zbsearch ^3.3.4,
+  # but this app initializes the static client directly; keep both call sites on
+  # the Dependabot-updated major until fumadocs-core declares support for v4.
+  zbsearch: ^4.0.0
+
   # Temporary hold. fumadocs-core requires shiki ^4.4.1 from 16.14.1 onward, and
   # 4.4.3 was published inside pnpm's minimumReleaseAge window, so a fresh
   # resolution fails CI. 4.4.2 satisfies the range and is old enough.

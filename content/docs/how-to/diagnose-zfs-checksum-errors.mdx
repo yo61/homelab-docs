@@ -214,10 +214,15 @@ Pause any client writing to the files first.
 
 ### Clearing the error state afterwards
 
-Repairing the live data does **not** clear `zpool status`. The counters are cumulative and the
-error log persists until `zpool clear`, and — more importantly — **every snapshot still
-referencing the original bad blocks still contains them**. A later scrub re-finds them there
-and re-reports.
+Repairing the live data does **not** clear `zpool status`, and neither does `zpool clear`.
+
+`zpool clear` zeroes the per-vdev `READ`/`WRITE`/`CKSUM` counters, but the **persistent error
+log survives it** — you will still see `N data errors` immediately afterwards. That log is only
+rebuilt by a scrub, from whatever the scrub actually finds.
+
+Which means a scrub run too early re-reports everything, because **every snapshot still
+referencing the original bad blocks still contains them**. Overwriting the live records leaves
+the snapshotted copies untouched.
 
 To be genuinely rid of it, the snapshots holding those blocks must age out or be destroyed.
 On a Time Machine share the `aapltm-` snapshots roll over on their own, so waiting is often
@@ -257,14 +262,35 @@ listing damaged files, as covered above.
 
 **The middleware reports the pool `OFFLINE`.** `pool.query` returns `status: OFFLINE`,
 `topology: None` and nulls for every size, scan and fragmentation field, while ZFS itself
-reports the pool `ONLINE` and serving data. It raises a matching CRITICAL alert,
-`Pool <name> state is OFFLINE`. The GUIDs match and `py-libzfs` reads the pool correctly
-(`state=0`, topology intact), so the fault is in middleware enrichment, not the ZFS layer.
+reports the pool `ONLINE` and serving data. It raises a matching alert,
+`Pool <name> state is OFFLINE`. The GUIDs match, so it is not a stale database record.
+
+The chain, which is worth knowing because the symptom looks nothing like the cause:
+
+1. `truenas_pylibzfs` `pool.status()` reads the on-disk error log unconditionally and **raises**
+   when it cannot resolve an entry. There is no way to skip it — `get_stats=False` does not
+   help.
+2. `query_impl()` in `plugins/zpool/query_impl.py` catches that in the **same handler** as
+   `open_pool()`'s `EZFS_NOENT` and calls `continue`, silently dropping the pool.
+3. `pool_normalize_info()` in `plugins/pool_/pool.py` gets an empty list back and returns its
+   pre-built skeleton verbatim — which is where `status: 'OFFLINE'` and every null comes from.
+
+The defect is the conflation. `EZFS_NOENT` from `open_pool()` means the pool is absent and
+skipping it is correct; `EZFS_NOENT` out of `pool.status()` means the pool exists and is
+healthy but one error-log entry points at a destroyed dataset. Callers cannot tell the two
+apart because both arrive as an empty list.
+
+<Callout type="info">
+  Do not test this with `import libzfs` — that is the older py-libzfs and it reads the pool
+  fine, which is misleading. Middleware uses **`truenas_pylibzfs`**, a different library.
+  Reproduce with `truenas_pylibzfs.open_handle().open_pool(name=...).status(asdict=True)`.
+</Callout>
 
 **The storage dashboard then crashes** with
 `Cannot read properties of null (reading 'class_special_usable')` — the UI dereferencing the
-null topology that `pool.query` handed it. Expect the dashboard to recover once the pool's
-error state is cleared.
+null topology `pool.query` handed it. It recovers once the error log empties, which needs a
+scrub that finds nothing, which in turn needs the snapshots holding the bad blocks to be gone.
+`zpool clear` alone will not do it.
 
 <Callout type="warn">
   **SMART is absent from this build entirely.** There is no `smart` entry in the services

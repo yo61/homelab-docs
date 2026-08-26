@@ -73,16 +73,32 @@ event stream, and **ZFS object numbers are inode numbers**, so you can resolve t
 
 ### Collect the object identifiers
 
+Each ereport carries a `zio_objset` and a `zio_object`, and **the two are only meaningful as a
+pair**. Extract them per event rather than as two independent lists:
+
 ```bash
-sudo zpool events -v | grep -E "zio_objset|zio_object " | sort -u
+sudo zpool events -v | awk '
+  /ereport\.fs\.zfs\./ { if (os && ob) print os, ob; os = ob = "" }
+  $1 == "zio_objset"   { os = $3 }
+  $1 == "zio_object"   { ob = $3 }
+  END                  { if (os && ob) print os, ob }
+' | sort -u | while read -r os ob; do
+  printf 'objset=%s (%d)  object=%s (%d)\n' "$os" "$((os))" "$ob" "$((ob))"
+done
 ```
 
 ```
-        zio_object = 0x10e6
-        zio_object = 0x18c2
-        zio_object = 0x1fa1
-        zio_objset = 0x183
+objset=0x183 (387)  object=0x10e6 (4326)
+objset=0x183 (387)  object=0x18c2 (6338)
+objset=0x183 (387)  object=0x1fa1 (8097)
 ```
+
+<Callout type="warn">
+  Do not flatten this with something like `grep -E "zio_objset|zio_object" | sort -u`. That
+  yields two unrelated sets and discards which object belongs to which dataset. The same object
+  number can legitimately appear under several objsets, so a flattened list sends you searching
+  the wrong mount and can pin an unrelated inode.
+</Callout>
 
 <Callout type="warn">
   The event ring buffer holds only 512 entries — a few hours on a busy pool. This gives you
@@ -108,6 +124,9 @@ listing.
 
 ### Resolve each object number to a path
 
+Search **the mountpoint of the dataset that object's own objset resolved to** — not whichever
+dataset happens to be to hand:
+
 ```bash
 find /mnt/TimeMachine/robin -inum 6338 -printf '%p  size=%s  mtime=%TF %TT\n'
 ```
@@ -116,7 +135,12 @@ find /mnt/TimeMachine/robin -inum 6338 -printf '%p  size=%s  mtime=%TF %TT\n'
 /mnt/TimeMachine/robin/Robin’s MacBook Pro.sparsebundle/bands/162  size=3861540864  mtime=2026-08-25 22:29:58
 ```
 
-Convert the hex object numbers from the events output with `printf '%d\n' 0x18c2`.
+To resolve several at once, pass each object number as its own `-inum` test:
+
+```bash
+find /mnt/TimeMachine/robin \( -inum 4326 -o -inum 6338 -o -inum 8097 \) \
+  -printf '%i  %p\n'
+```
 
 ## 3. Measure the real extent
 

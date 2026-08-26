@@ -1,0 +1,228 @@
+---
+title: Silent failures on nas1
+description: A 384 KiB ZFS repair in August 2026 that uncovered four separate monitoring systems which had failed without telling anyone
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+On 26 August 2026 `nas1` was showing data corruption on the `TimeMachine` pool. The actual
+damage turned out to be **384 KiB**, repaired in three writes. Everything else on this page is
+what the investigation ran into on the way there.
+
+The reason it's worth writing down isn't the ZFS repair — that's covered as a procedure in
+[Diagnose ZFS checksum errors](/how-to/diagnose-zfs-checksum-errors). It's that four separate
+monitoring systems had failed, none of them had said so, and every one of those failures
+presented as a healthy, quiet machine.
+
+## The thing that was actually wrong
+
+`zpool status` reported this:
+
+```
+    NAME                                      STATE     READ WRITE CKSUM
+    TimeMachine                               ONLINE       0     0     0
+      mirror-0                                ONLINE       0     0     0
+        d098a203-3fcb-4743-9b76-babdf7044669  ONLINE       0     0 20.7K
+        d2101320-ecbf-47d4-96e4-6cd7c198aca1  ONLINE       0     0 20.7K
+
+errors: 8 data errors
+action: Restore the file in question if possible. Otherwise restore the
+        entire pool from backup.
+```
+
+The real figure was three damaged 128 KiB records, in three band files of one Time Machine
+sparsebundle, out of 1218 bands. The 20,293 checksum errors were those same three blocks read
+about 6,760 times each — macOS retrying hard on `EIO`, once an hour, for the seven days since
+the counters were last cleared. The counter measures *retries*, not damage.
+
+Both mirror copies of each record were bad, so nothing could reconstruct them. They were
+overwritten with zeros after checking that each target was already unreadable,
+`recordsize`-aligned and writable — a Time Machine backup being reconstructible by definition.
+
+That part took about twenty minutes.
+
+## The problem underneath: nothing could be dated
+
+Every useful question during the investigation turned out to be a question about *when*.
+
+When did the checksum errors first appear? When did the 71 CRC errors on `sdb` accumulate — is
+that link failing now, or did it fail years ago? The pool had been imported twelve times in
+three months; were those power cuts, crashes, or planned reboots?
+
+None of it could be answered, because:
+
+- `zpool events` holds 512 entries — about two hours on a busy pool.
+- The systemd journal was retaining about two hours.
+- `/var/log/messages` and `/var/log/syslog` had not been written since **5 May**.
+- SMART was **disabled** on both drives under investigation.
+
+The only dated evidence on the entire machine was a `smart-baseline-2026-08-18.txt` file
+written by hand eight days earlier. Comparing it against a fresh reading answered the CRC
+question in one step: 70 errors on 18 August, 71 on 26 August. Mostly historical, but not
+closed — one new error in eight days, and zero power-off retracts in the same window.
+
+<Callout type="info">
+  That hand-written baseline did more diagnostic work than any single command run during the
+  investigation. Periodic dated snapshots of a handful of attributes are worth far more than
+  they look, because they convert "we'll never know" into arithmetic.
+</Callout>
+
+## Four failures that never announced themselves
+
+### 1. SMART disabled on the drives being investigated
+
+`smartctl` reported `SMART Disabled` on both `TimeMachine` members. Every conclusion drawn
+about those drives early on — no CRC errors, no reallocations, no transport faults — came from
+logs that were not being collected. Absence of errors was read as absence of problems.
+
+Once enabled, `sdb` turned out to have 71 CRC errors against `sda`'s zero, and both drives had
+recorded emergency head retracts (49 and 85) from power vanishing without warning.
+
+### 2. The SMART subsystem is absent from this TrueNAS build
+
+Not misconfigured — **gone**. On 26.0.0-BETA.3 there is no `smart` entry in the services list,
+and `smart.config`, `smart.test.query`, `smart.test.results` and `disk.smart_attributes` all
+return `Method does not exist`. Nothing runs scheduled tests, and nothing raises SMART alerts.
+
+The last completed self-test on either Time Machine drive was around 27–28k power-on hours,
+against roughly 32k now. Some 4,000 hours with no self-test, and no indication anywhere that
+testing had stopped.
+
+### 3. A drive failing its own health check, with nobody listening
+
+`sdd` — an HGST Ultrastar He12 in the `space` pool — appeared in a diagnostic only as a
+*control disk*, to compare against the drives actually under suspicion. It reported:
+
+```
+ 22 Unknown_Attribute  0x0023  001 001 025  Pre-fail  Always  FAILING_NOW  100
+SMART overall-health self-assessment test result: FAILED!
+```
+
+Attribute 22 on helium drives is Helium Level. Comparing all four members of the pool settled
+it — the other three read `100/025` and `PASSED`; only `sdd` reads `001/025` and `FAILED!`. A
+genuine, progressive, terminal failure in a pool holding home directories and applications.
+
+It had been reporting that to anyone who asked, and nothing was asking. It surfaced by
+accident, while chasing an unrelated problem on a different pool.
+
+<Callout type="warn">
+  The raw value of that attribute reads `100`, which looks reassuring, and re-reading with a
+  different raw format flips every drive to `0`. The **normalised** value is the one the drive
+  computes and the one that matters. Anchoring on the raw value nearly dismissed this as a
+  parsing artifact.
+</Callout>
+
+### 4. The system logger had been dead for 113 days
+
+`syslog-ng` was in a permanent crash loop with **176,844 restarts**, aborting roughly once per
+second since **5 May**. It never reached the point of logging anything.
+
+The cause was a glib assertion in `qdisk_get_empty_space()` during `cfg_init`, on the
+`disk-buffer()` attached to the audit SQL destinations in `tnaudit.conf`. It aborts from a
+completely clean state — not corrupt data, but a configuration syslog-ng 4.8.1 cannot
+initialise.
+
+The consequences compounded:
+
+- **No system logging at all.** `/var/log/messages`, `/var/log/syslog`, and every TrueNAS
+  per-service log — `middlewared.log`, `zettarepl.log`, `app_lifecycle.log`, `failover.log` —
+  stopped and stayed stopped.
+- **~3 GB/day of journal churn.** Each abort produced a restart message, a coredump
+  notification and a full stack trace. Journal files rotated every three minutes against the
+  shipped 50 MB cap, cutting effective retention to about two hours and evicting everything
+  useful.
+- **103 MB of coredumps** and **421 orphaned `.rqf` files**.
+- **281 MB of un-checkpointed SQLite WAL**, because syslog-ng never survived long enough to
+  commit.
+
+Commenting out the `disk-buffer()` blocks fixed it immediately. Notably, `audit.config` showed
+**no audit services enabled** — the destinations that crash-looped the system logger for four
+months were buffering nothing.
+
+## A fifth, less serious: the storage dashboard
+
+The TrueNAS storage dashboard failed to render at all, with
+`Cannot read properties of null (reading 'class_special_usable')`.
+
+`pool.query` was reporting `TimeMachine` as `OFFLINE` with `topology: None` and nulls for every
+size and scan field, while ZFS reported it `ONLINE` and serving data. The chain:
+
+1. `truenas_pylibzfs` `pool.status()` reads the on-disk error log unconditionally and raises
+   `EZFS_NOENT` when an entry cannot be resolved.
+2. `query_impl()` catches that in the **same handler** as `open_pool()`'s `EZFS_NOENT` and
+   calls `continue`, silently dropping the pool.
+3. `pool_normalize_info()` receives an empty list and returns its pre-built skeleton — the
+   source of `OFFLINE` and every null.
+
+The defect is the conflation. `EZFS_NOENT` from `open_pool()` means the pool is absent, and
+skipping is correct. The same code out of `pool.status()` means the pool is healthy but one
+error-log entry points at a destroyed snapshot. Callers cannot distinguish them, because both
+arrive as an empty list.
+
+## Contributory factors for the corruption itself
+
+No single cause was established, and it's worth being honest that the investigation ended
+without one. What is known:
+
+- **Confirmed, recurring mains power cuts**, with no UPS. NUT is configured on the box but the
+  UPS service is `STOPPED`, and there is no UPS hardware for it to talk to. The drives
+  independently corroborate this with 134 emergency head retracts between them.
+- **Write-back caching enabled** on both Time Machine drives, so a power loss can discard
+  writes ZFS believes are durable — but only if a cache flush is lost.
+- **A documented firmware defect** on exactly this drive and controller combination: Seagate
+  Exos `ST16000NM001G` on `SN03`, on an Intel controller, produces ATA timeouts and **failed
+  FLUSH CACHE** commands when SATA link power management is enabled
+  ([openSeaChest #170](https://github.com/Seagate/openSeaChest/issues/170)). A failed flush is
+  precisely the mechanism that damages both mirror members at the same offsets. The trigger is
+  not active here — link power management reads `max_performance` on every host — so this fits
+  the mechanism without being demonstrated.
+
+Several hypotheses were tested and eliminated: bad RAM (the box has ECC), a failing disk
+(zero reallocated, pending or uncorrectable sectors on either drive), transport faults (no ATA
+errors in `dmesg` at all), and `ashift` mismatch (uniformly 12 on both pools — an earlier
+reading of 9 came from a vdev property that reports the configured default rather than the
+on-disk value).
+
+<Callout type="info">
+  `zpool get ashift <pool> <vdev>` reports the default for *new* vdevs, not what is on disk. It
+  returned `9` for all four pools including the SSDs. `zdb -C <pool> | grep ashift` reads the
+  actual label. Two unreliable readings agreeing on a wrong value is not corroboration.
+</Callout>
+
+## What changed
+
+| | before | after |
+|---|---|---|
+| TimeMachine damage | 3 records unreadable | repaired, bands scan clean |
+| syslog-ng | 176,844 restarts, dead since 5 May | `active`, logs writing |
+| Journal volume | ~3 GB/day, ~2 h retention | 76.5 K |
+| `/audit` | 33 MB, 269 MB stale WAL | 384 KB, WALs at zero |
+| `pool.query` | `TimeMachine` OFFLINE, topology null | all three pools visible |
+| Storage dashboard | crashed on null deref | renders |
+
+Two of those fixes patch files TrueNAS regenerates when an update creates a new boot
+environment — the `query_impl.py` change and the `tnaudit.conf` edit. Both are re-applied by a
+POSTINIT script registered in the config database, which is idempotent, validates before
+committing, and refuses to touch a file whose content differs from what it expects.
+
+## What to carry forward
+
+**The alerts that mattered here are liveness alerts, not threshold alerts.** Not one of these
+problems presented as a bad reading. They presented as *no reading*: a service not running, a
+sensor switched off, a subsystem absent, a log file that stopped growing. A dashboard showing
+green because nothing reported anything is exactly the state this machine was in.
+
+Monitoring worth having therefore needs to answer "did this check actually run?" separately
+from "did this check pass?" — no SMART sample in 24 h, syslog-ng not running, journal volume
+abnormal in *either* direction.
+
+**Error and empty are different results.** This bit the investigation three times: a `find`
+with `-xdev` that silently skipped every separate dataset, an `ls /audit` that returned nothing
+because of permissions rather than because it was empty, and a first draft of the POSTINIT
+script that read a permission-denied `grep` as "no disk-buffer blocks present" and would have
+skipped at boot while logging something reassuring and wrong. Shells collapse both into a
+non-zero exit. When a command that should return something returns nothing, check it was
+allowed to look before drawing any conclusion from the silence.
+
+**Take dated baselines.** Cheap, boring, and the only thing on this machine that made a
+time-based question answerable.

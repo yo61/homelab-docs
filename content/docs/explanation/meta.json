@@ -4,6 +4,7 @@
     "index",
     "cilium-day0-day2",
     "talos-rebuild-gotchas",
+    "nas1-silent-failures",
     "why-gitops",
     "logging-choices",
     "reading-cluster-logs",

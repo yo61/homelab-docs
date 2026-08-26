@@ -1,0 +1,266 @@
+---
+title: Diagnose ZFS checksum errors
+description: Work out what a CKSUM count on nas1 actually means, find which files are damaged when zpool status -v refuses to list them, and decide how to repair
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`zpool status` reports data corruption in a way that consistently reads as worse than it is.
+This page covers how to turn a scary-looking `CKSUM` count into a concrete list of damaged
+files and a measured byte count, so the repair decision is made on evidence rather than on
+the tone of the status output.
+
+The worked example throughout is the real incident on `nas1` in August 2026, where a status
+output implying total pool loss turned out to be **384 KiB** of damage.
+
+## 1. Read the counters correctly
+
+A typical alarming output:
+
+```
+        NAME                                      STATE     READ WRITE CKSUM
+        TimeMachine                               ONLINE       0     0     0
+          mirror-0                                ONLINE       0     0     0
+            d098a203-3fcb-4743-9b76-babdf7044669  ONLINE       0     0 20.7K
+            d2101320-ecbf-47d4-96e4-6cd7c198aca1  ONLINE       0     0 20.7K
+
+errors: 8 data errors, use '-v' for a list
+```
+
+Three things to understand before doing anything:
+
+**`CKSUM` counts failed read attempts, not damaged blocks.** A client that retries hard on
+`EIO` inflates it without limit. On `nas1`, 20,293 checksum errors were **three** damaged
+blocks read roughly 6,760 times each — macOS Time Machine retrying about 38 times per block
+per hourly backup pass. The counter says nothing about how much data is affected.
+
+**`READ 0 / WRITE 0` means the disks are fine.** Every I/O completed and was acknowledged.
+Corruption that arrives with a valid SATA CRC was wrong *before* the CRC was computed, so
+it is not a cable, a link, or a failing drive. A flaky cable shows up as `UDMA_CRC_Error_Count`
+in SMART and `hard resetting link` in `dmesg`, and produces **READ** errors, not silent
+checksum failures.
+
+**Identical counts on both mirror members is the diagnostic signal.** When a block fails
+checksum, ZFS tries the other member; if that one is good it repairs and increments only the
+failing vdev. Equal counters plus `scrub repaired 0B` means every failure incremented both —
+each bad block was bad on both disks. That is corruption on a path *shared* by both members,
+after ZFS computed the checksum in RAM and before the bits reached two independent platters.
+
+The only number that bounds the damage is the **`N data errors`** line, and even that
+overstates it: the error log counts `(dataset, object)` pairs, so one damaged file appears
+once for the live dataset and once more for every snapshot still referencing it.
+
+## 2. Find which files are damaged
+
+`zpool status -v` should list them, but on `nas1` it fails:
+
+```
+errors: List of errors unavailable: no such pool or dataset
+```
+
+<Callout type="info">
+  Check whether this is really a failure. Run as a non-root user it says
+  `permission denied` instead, which is a different problem entirely. Only
+  `no such pool or dataset` is a genuine `ENOENT` from the kernel.
+</Callout>
+
+The listing is all-or-nothing, so a single unresolvable entry hides every error. With the
+`head_errlog` feature active and a Time Machine share whose `aapltm-` snapshots macOS creates
+and destroys continuously, unresolvable entries are close to inevitable.
+
+You do not need that listing. The kernel still reports the object identifiers in the raw
+event stream, and **ZFS object numbers are inode numbers**, so you can resolve them yourself.
+
+### Collect the object identifiers
+
+```bash
+sudo zpool events -v | grep -E "zio_objset|zio_object " | sort -u
+```
+
+```
+        zio_object = 0x10e6
+        zio_object = 0x18c2
+        zio_object = 0x1fa1
+        zio_objset = 0x183
+```
+
+<Callout type="warn">
+  The event ring buffer holds only 512 entries — a few hours on a busy pool. This gives you
+  what was visible in that window, **not** a proven exhaustive list. A full scrub is what
+  makes it exhaustive.
+</Callout>
+
+### Map the objset to a dataset
+
+`zfs` exposes `objsetid` as a property, so no `zdb` is required:
+
+```bash
+zfs list -H -t all -r -o objsetid,name TimeMachine | awk '$1 == 387'
+```
+
+```
+387     TimeMachine/robin
+```
+
+If the objset resolves to a live dataset, the damage is in live data. If it does not appear
+at all, the entry refers to a destroyed snapshot — which is what breaks the `zpool status -v`
+listing.
+
+### Resolve each object number to a path
+
+```bash
+find /mnt/TimeMachine/robin -inum 6338 -printf '%p  size=%s  mtime=%TF %TT\n'
+```
+
+```
+/mnt/TimeMachine/robin/Robin’s MacBook Pro.sparsebundle/bands/162  size=3861540864  mtime=2026-08-25 22:29:58
+```
+
+Convert the hex object numbers from the events output with `printf '%d\n' 0x18c2`.
+
+## 3. Measure the real extent
+
+Knowing the files is not the same as knowing the damage. Read each file in `recordsize`
+chunks and record which offsets return `EIO`:
+
+```python
+import os, sys
+
+CHUNK = 131072  # match the dataset recordsize
+
+for path in sys.argv[1:]:
+    size = os.path.getsize(path)
+    fd = os.open(path, os.O_RDONLY)
+    bad, off = [], 0
+    while off < size:
+        try:
+            os.pread(fd, CHUNK, off)
+        except OSError:
+            if bad and bad[-1][1] == off:
+                bad[-1][1] = off + CHUNK
+            else:
+                bad.append([off, off + CHUNK])
+        off += CHUNK
+    os.close(fd)
+    total = sum(e - s for s, e in bad)
+    print(f"{path}: {len(bad)} bad range(s), {total} bytes")
+    for s, e in bad:
+        print(f"    {s:,} .. {e:,}  ({s / size * 100:.1f}% into file)")
+```
+
+The shape of the result is itself diagnostic. **Isolated single records** point to a small
+number of discrete past events. **Long contiguous runs** point to a single large event.
+**Damage scattered broadly and growing between runs** points to something still active — stop
+and investigate the write path before repairing anything.
+
+On `nas1` this returned exactly one damaged 128 KiB record in each of three files: 384 KiB
+total, against a status output recommending restoring the entire pool from backup.
+
+## 4. Decide the repair
+
+Both mirror copies are bad, so nothing can reconstruct the data. The choice is only about
+what to put in its place.
+
+**Recreate the dataset.** The honest option when the data matters. Destroy the affected
+dataset and its snapshots and repopulate from source.
+
+**Surgical overwrite.** Write zeros over the unreadable records. The damage becomes *known*
+rather than *unreadable*, errors stop, and history is preserved. Reasonable when the damaged
+extent is tiny and the content is reconstructible or disposable — a Time Machine sparsebundle
+being the obvious case. Not reasonable when a silent hole would later be mistaken for real data.
+
+<Callout type="warn">
+  Gate the overwrite on a pre-flight check that every target is **currently unreadable**,
+  **`recordsize`-aligned**, and **writable** — and abort if any target reads successfully.
+  Without that gate a wrong offset destroys recoverable data.
+</Callout>
+
+Alignment is not optional. Writing a full `recordsize` record at a `recordsize`-aligned offset
+replaces the whole record. A partial write forces ZFS to read the existing record first, which
+returns `EIO`, and the write fails.
+
+```python
+fd = os.open(path, os.O_WRONLY)
+os.pwrite(fd, b"\0" * CHUNK, offset)   # offset % CHUNK == 0
+os.fsync(fd)
+os.close(fd)
+```
+
+Pause any client writing to the files first.
+
+### Clearing the error state afterwards
+
+Repairing the live data does **not** clear `zpool status`. The counters are cumulative and the
+error log persists until `zpool clear`, and — more importantly — **every snapshot still
+referencing the original bad blocks still contains them**. A later scrub re-finds them there
+and re-reports.
+
+To be genuinely rid of it, the snapshots holding those blocks must age out or be destroyed.
+On a Time Machine share the `aapltm-` snapshots roll over on their own, so waiting is often
+the cheapest option.
+
+```bash
+sudo zpool clear TimeMachine
+sudo zpool scrub TimeMachine     # confirms whether anything remains
+```
+
+## 5. Contributory factors worth checking
+
+Corruption on a shared path with healthy disks and no transport errors usually points at one
+of these. None is proven for the `nas1` incident; they are the list worth walking.
+
+- **Unclean shutdowns during writes.** Check `zpool history` for import frequency — repeated
+  or clustered `zpool import` lines mean the box is restarting unexpectedly. `nas1` showed 12
+  imports in three months, including one *during a scrub*.
+- **UPS not actually monitoring.** `/etc/nut/` being populated proves nothing. `upsc -l`
+  listing no UPS means nothing is being watched, and the TrueNAS **UPS** service may be
+  `STOPPED` with `enable=False`.
+- **RAM.** Check `dmidecode -t memory` for `Error Correction Type`. `nas1` has ECC
+  (`18KDF1G72AZ` Micron parts), which pushes bad memory well down the list. Note that EDAC may
+  register no memory controller, in which case ECC works in hardware but corrected-error counts
+  are invisible.
+- **Controller.** Map every disk to its controller with
+  `readlink -f /sys/block/sd*` and compare which pools are affected. A correlation is
+  suggestive but usually confounded with disk batch and workload — and an absence of ATA errors
+  in `dmesg` argues strongly against the controller regardless.
+
+## TrueNAS 26.0.0-BETA.3 gotchas
+
+Three separate defects in this build interact badly with a pool in an error state.
+
+**The error log listing fails.** `zpool status -v` returns `no such pool or dataset` instead of
+listing damaged files, as covered above.
+
+**The middleware reports the pool `OFFLINE`.** `pool.query` returns `status: OFFLINE`,
+`topology: None` and nulls for every size, scan and fragmentation field, while ZFS itself
+reports the pool `ONLINE` and serving data. It raises a matching CRITICAL alert,
+`Pool <name> state is OFFLINE`. The GUIDs match and `py-libzfs` reads the pool correctly
+(`state=0`, topology intact), so the fault is in middleware enrichment, not the ZFS layer.
+
+**The storage dashboard then crashes** with
+`Cannot read properties of null (reading 'class_special_usable')` — the UI dereferencing the
+null topology that `pool.query` handed it. Expect the dashboard to recover once the pool's
+error state is cleared.
+
+<Callout type="warn">
+  **SMART is absent from this build entirely.** There is no `smart` entry in the services
+  list, and `smart.config`, `smart.test.query`, `smart.test.results` and
+  `disk.smart_attributes` all return `Method does not exist`. Nothing runs scheduled tests or
+  raises SMART alerts. Verify per-disk state directly with `smartctl -i /dev/sdX` — disks may
+  report `SMART Disabled`, in which case enable it with `smartctl -s on /dev/sdX`.
+</Callout>
+
+## Reference: nas1 storage layout
+
+Useful when reasoning about which pools share hardware.
+
+| Pool | Disks | Controller |
+| --- | --- | --- |
+| `TimeMachine` | `sda`, `sdb` — Seagate ST16000NM001G 16 TB (mirror) | `00:17.0` Intel Atom C2000 AHCI **SATA2**, 3.0 Gb/s |
+| `boot-pool` | `sdc`, `sdf` — Samsung 870 EVO 250 GB (mirror) | `00:18.0` Intel Atom C2000 AHCI SATA3, 6.0 Gb/s |
+| `ssd1` | partitions on the boot SSDs (mirror) | `00:18.0` |
+| `space` | `sdd`, `sde`, `sdg`, `sdh` — HGST HUH721212ALE601 12 TB (raidz2) | `09:00.0` Marvell 88SE9230, 6.0 Gb/s |
+
+Free ports: `ata1`/`ata2` on `00:17.0`, and `ata7`/`ata8` on `04:00.0` (Marvell 88SE9172).
+The ports `ata13`–`ata16` appear free but are phantom — the 88SE9230 is a 4-port part and is
+already fully populated.

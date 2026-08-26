@@ -4,6 +4,7 @@
     "index",
     "rebuild-the-cluster",
     "recover-from-a-power-cut",
+    "diagnose-zfs-checksum-errors",
     "drain-a-node",
     "add-a-new-service",
     "set-up-logging",

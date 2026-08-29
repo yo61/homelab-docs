@@ -279,18 +279,10 @@ Roughly one commit in four is documentation, and it is not README churn.
 
 ## Where the cluster stands [#current-state]
 
-As of 2026-08-28:
-
-| Layer | Version | Notes |
-| --- | --- | --- |
-| Talos Linux | v1.13.9 | Three nodes, LACP bonds, static per-node iSCSI IQNs |
-| Kubernetes | v1.36.4 | Held below 1.37 until Talos supports it |
-| Cilium | 1.20.1 | Gateway API v1.6.1, day-0 floor re-rendered to match |
-| Storage | tns-csi | iSCSI to nas1; `truenas-iscsi` is the default StorageClass |
-| Logs | Loki 18.11.2 | HA Monolithic on AIStor S3, fed by Vector |
-| Traces | Tempo 2.2.4 | OpenTelemetry Collector, operator on two replicas |
-| Secrets | OpenBao | Projected by External Secrets 2.9.0 |
-| Last Light | v0.28.1 | Kubernetes sandbox backend, managing 18 repositories |
+Everything above is history. For what the cluster runs *now* — node addresses, the Talos and
+Kubernetes versions, the Cilium floor and target, and the installer schematic — see
+[Environment](/reference/environment). That page is the authoritative lookup and the single place
+those values are maintained, so this one does not repeat them.
 
 For the reasoning behind these choices organised as themes rather than as a sequence, read [how this
 cluster evolved](/explanation/evolution). For the complete change-by-change index, read [every

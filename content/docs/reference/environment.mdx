@@ -23,9 +23,9 @@ than repeating these values; if something changes, change it here.
 
 | Component | Version |
 | --- | --- |
-| Talos | `v1.13.6` |
-| Kubernetes | `v1.36.2` |
-| Cilium | day-0 inline floor **1.19.6**; day-2 Flux HelmRelease target **1.19.6** |
+| Talos | `v1.13.9` |
+| Kubernetes | `v1.36.4` |
+| Cilium | day-0 inline floor **1.20.1**; day-2 Flux HelmRelease target **1.20.1** |
 
 Cilium is a two-layer setup — see
 [Cilium: day-0 floor, day-2 Flux](/explanation/cilium-day0-day2). kube-proxy is
@@ -36,11 +36,13 @@ the patch).
 
 - **Install disk:** `/dev/nvme0n1`.
 - **Installer image:** resolved by talhelper from the extension set in
-  `talconfig.yaml` (`siderolabs/amdgpu` + `iscsi-tools` + `util-linux-tools`) →
-  factory `metal-installer`, schematic
-  `3a33ec6dfc8cfd61d2a3db3caf97894f31e913952d71ce3c3fbbe565a3f08339`. If the
+  `talconfig.yaml` (`siderolabs/amdgpu` + `iscsi-tools` + `realtek-firmware` +
+  `util-linux-tools`) → factory `metal-installer`, schematic
+  `883e81068669039b2166ba1d0bc402a5ee2870bf4f02bc8032e8de227f005467`. If the
   `metal-installer` hash differs at genconfig time, the extension set is wrong —
-  stop and fix, or you rebuild without `iscsi-tools`.
+  stop and fix, or you rebuild without `iscsi-tools`. The hash is of the
+  schematic, not the Talos version, so it moves only when the extension set
+  changes — it last moved on 2026-08-24 when `realtek-firmware` was added.
 
 ## Storage and secrets
 

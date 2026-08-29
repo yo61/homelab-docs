@@ -1,0 +1,297 @@
+---
+title: The build timeline
+description: Seven weeks of flux-homelab commit by commit — what got built, what broke, and the class of bug that kept coming back
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[How this cluster evolved](/explanation/evolution) tells the story as arcs — the problem that forced
+each change, the choice made, the trade-off accepted. It deliberately stops short of being a
+sequence, and points here for one.
+
+This is that sequence: `flux-homelab` from its first commit on 2026-07-08 to 2026-08-28, in the
+order things actually happened. Three-hundred-and-sixty-one commits across 289 merged pull
+requests, one storage incident, and a class of bug that showed up four separate times before it got
+a name.
+
+The repo enforced Conventional Commits from its third commit, which is the only reason a page like
+this can be assembled at all.
+
+This page is the narrative. For the exhaustive version — every change, its reason, and a link to the
+code — see [every change, and why](/reference/changes).
+
+| Commit type | Count |
+| --- | --- |
+| Commits, total | 361 |
+| Features | 88 |
+| Fixes | 53 |
+| Docs | 97 |
+| Chores | 71 |
+| Reverts | 3, plus one breaking change |
+
+## Bring-up — 8 to 21 July [#bring-up]
+
+Bare metal to a reconciling cluster. Three of the first day's commits are fixes, and two of them
+are the kind that only show up on a machine with no prior state — which is exactly what a rebuild
+runbook has to survive.
+
+**8 July.** The repo opens with the whole substrate in one commit: Cilium, OpenBao, and External
+Secrets on Talos. The conventional-commit hook lands the same day.
+
+Three fixes follow immediately, each of them a real break rather than a tidy-up:
+
+- A [duplicate `PodSecurity` block](https://github.com/yo61/flux-homelab/pull/4) **crash-looped the
+  apiserver**. As a strategic-merge patch it appended to `exemptions.namespaces`, listing
+  `kube-system` twice; Talos' own default was byte-identical.
+  ([details](/explanation/talos-rebuild-gotchas#podsecurity))
+- [node-exporter needed privileged PodSecurity](https://github.com/yo61/flux-homelab/pull/6).
+  ([details](/explanation/talos-rebuild-gotchas#node-exporter-pss))
+- Talos [**regenerates the iSCSI initiator name from node identity on every
+  wipe**](https://github.com/yo61/flux-homelab/pull/7), so a rebuilt node falls out of the TrueNAS
+  allowed-initiators list and every volume fails to mount with "No portals found". Fixed by pinning
+  a static per-node IQN via `machine.files`.
+  ([details](/explanation/talos-rebuild-gotchas#iscsi-iqn))
+
+The same day brought the rebuild runbook, a service inventory, and PXE commissioning over an LACP
+bond.
+
+**9 July.** Gateway API had to exist before anything could route: a Flux-managed `GatewayClass`,
+Gateway API support switched on in cert-manager, and the CRDs installed at day-0 through Cilium's
+`extraManifests` — because nothing else is running yet to install them.
+
+**13–14 July.** The first full bare-metal rebuild, which reworked the teardown so `reset` no longer
+hangs and nodes PXE straight to maintenance mode. Then services went public on `*.lab.yo61.net`:
+HTTPRoutes on the homelab gateway, Grafana's admin credentials from OpenBao via ESO, and declarative
+UniFi DNS through an external-dns webhook — whose image tag carries no `v` prefix, and whose TLS
+verification had to be enabled explicitly.
+
+**20–21 July.** [Renovate takes over dependency
+updates](https://github.com/yo61/flux-homelab/pull/30), authenticated as a GitHub App using
+`client-id` rather than the deprecated `app-id`. Then Cilium moves to [Flux-managed day-2
+upgrades](/explanation/cilium-day0-day2) — designed, planned, and proven by dropping the day-0 floor
+one patch below target so a real rebuild had to converge it forward.
+
+## Last Light lands — 22 to 30 July [#last-light]
+
+The cluster's reason for existing: an AI coding agent running against Robin's own repositories.
+Twelve commits in one day put it in the cluster; the week after was spent discovering what it needed
+that Kubernetes does not hand you.
+
+**22 July.** A KVM device plugin, because agent workloads run in nested VMs. Secrets projected from
+OpenBao. A Cloudflare Tunnel for webhook ingress, so no inbound firewall holes are needed. A Cilium
+egress lockdown giving the agent no reach into the LAN. A dashboard route on the internal gateway
+only.
+
+**23 July.** Five upstream defects written up and filed — running someone else's agent in an unusual
+environment surfaces their bugs. Gondolin/Kubernetes gaps, a 404 on cron discovery for private
+repositories, an unhelpful 422 error message, and a sandbox agent-write 403.
+
+**24 July.** Workflow runs are serialized to the node's single KVM device. Concurrency had been
+raised to 3 the day before, and there is one `/dev/kvm` per node — so anything above one queues on a
+resource the scheduler cannot see.
+
+**27 July.** The Kubernetes sandbox cutover ships, is **reverted within the hour**, and is
+re-applied the same day pinned to a specific agent image. The revert message says why plainly: the
+deployed image predated the backend it was being cut over to. A clean argument for pinning digests.
+
+**28 July.** [Spegel lands](https://github.com/yo61/flux-homelab/pull/97) — peer-to-peer image
+mirroring, so a cold node pulls from its neighbours rather than from upstream registries. Six
+harness deploys follow the same day, tracking upstream fixes for budget accounting, quota
+backpressure and inline reviews.
+
+**30 July.** [Manifests start being validated](https://github.com/yo61/flux-homelab/pull/110) before
+they can be committed: `kustomize build` piped into `kubeconform`, in both the pre-commit hook and
+CI. Its first bug was its own — kustomize shells out to `git` to fetch remote bases, and pre-commit
+hooks leak `GIT_DIR` into child processes, so the fetch tried to add a remote to *this* repo.
+Standalone and CI runs were fine; only the local hook broke.
+
+## Observability — 25 July to 1 August [#observability]
+
+Built in parallel with the Last Light work above. The design changed twice before any code shipped:
+once on architecture, once because a vendor removed the product it depended on.
+
+**25 July.** [Loki and Vector go in](https://github.com/yo61/flux-homelab/commit/4ec3c5b). The plan
+pivoted from Simple Scalable to HA Monolithic, then swapped object stores entirely when community
+MinIO was removed from TrueNAS — AIStor Free took its place. The reasoning is on its own page: [why
+Loki and Vector](/explanation/logging-choices). Vector ships pod logs first, then Talos host and
+kernel logs. `truenas-iscsi` becomes the default StorageClass.
+
+**25–27 July.** Logs become level-aware, then quiet: pod levels extracted into `detected_level`,
+Loki's own server logs turned down to warn, and gateway 2xx access logs dropped at Vector rather
+than at query time — cheaper, and nobody read them. Loki's read fan-out against object storage was
+bounded, over-corrected, then relaxed, with the chunks cache sized to 1 GB.
+
+<Callout type="warn" title="Vector 0.57 crash-looped for ~760 restarts, silently">
+The upgrade added "template confinement", which rejects fully-dynamic label templates at startup.
+The DaemonSet exited 78 (`EX_CONFIG`) on every start, and **no pod or Talos logs reached Loki at
+all**. Rather than take the `dangerously_allow_unconfined` opt-out, the dynamic fields moved into
+Loki structured metadata — filterable without multiplying streams, and not a stream-routing
+template, so confinement no longer applies. Three follow-ups repaired the dashboards for the new
+schema.
+</Callout>
+
+**31 July.** [OpenTelemetry Collector and Tempo](https://github.com/yo61/flux-homelab/pull/118)
+bring tracing, and with them a Last Light dashboard carrying cost, performance and trace rows — plus
+an agent-overhead stat separating time the model spent from time the harness spent. A CronJob starts
+sweeping ghost pods left by power cuts, with deletes fire-and-forget: a periodic sweep has no reason
+to block on confirmation, it keeps RBAC at list-and-delete with no watch verb, and it cannot hang on
+a slow-terminating pod.
+
+## Alerting and automation — 3 to 14 August [#alerting]
+
+With observability built, the question becomes who gets woken up.
+
+**4 August.** A [self-hosted ntfy server](https://github.com/yo61/flux-homelab/pull/138) on [its own
+cloudflared tunnel](https://github.com/yo61/flux-homelab/pull/140), serving API only. Alertmanager
+routing, an ntfy bridge, and a heartbeat — so silence is distinguishable from a dead alerting path.
+App credentials were moved off the cluster bring-up path first. A service-standup CLI automates the
+repetitive part of adding a service: namespace, secret, route, DNS, dashboard.
+
+**6 August.** A sustained push on log noise, attacked at source rather than filtered at the
+dashboard. A per-namespace error census script, then fixes: cert-manager 1.21.1 to stop
+`filteredEventHandler` spam, zerolog console levels detected properly, and a single pinned TLSRoute
+CRD installed to silence a cilium-operator path that lists `TLSRouteList` without the support guard
+it uses elsewhere — **~268 lines a day**. What survives, and how to tell benign from real, is
+written up in [reading cluster logs](/explanation/reading-cluster-logs).
+
+**10 August.** [Twenty pods across nine namespaces](https://github.com/yo61/flux-homelab/pull/179)
+had been sitting at `Completed` for up to fifteen days. Graceful node shutdown SIGTERMs containers
+but does not delete pod objects, so anything exiting 0 leaves a `Succeeded` tombstone — and the
+existing sweep selected `status.phase=Failed`, evaluated server-side. It *structurally could not
+match them*. Only Deployment-managed pods leak: the ReplicaSet controller stops counting them as
+active but keeps them alive, while DaemonSet and StatefulSet controllers delete terminal pods
+outright.
+
+**11–14 August.** The test suite moves to a cleared environment rather than inheriting the shell's —
+a test asserting a `ValueError` had been passing because the code fell back to an environment
+variable that happened to be set. Python CI, Dependabot across every ecosystem, shellcheck and shfmt
+enforced. Renovate starts merging its own patch and minor updates on a daily cron — with a quality
+criterion added the same day for unattended automation safety gates, so the thing that merges
+without a human has explicit conditions under which it must not.
+
+## The nas1 reboot — 24 August [#nas1-reboot]
+
+The only formal incident report in the repo. Everything in the cluster's storage path runs through a
+single NAS, and this is what happens when it reboots.
+
+nas1 was upgraded and rebooted at 11:14 UTC. Every iSCSI session dropped, and **eight ext4
+filesystems across all three nodes** hit I/O errors and latched `emergency_ro` — the last three
+aborts within 1.4 seconds of each other. The backend returned in about two minutes and the sessions
+reconnected themselves with no intervention.
+
+<Callout type="warn" title="The outage was two minutes; the recovery tail was forty">
+`errors=remount-ro` is sticky. The filesystems stayed read-only long after the storage underneath
+them was healthy again, and recovery meant restarting every consuming pod so kubelet would unstage
+and restage the volumes. Nothing was lost — ext4 replayed its journal on remount.
+</Callout>
+
+Prometheus entering CrashLoopBackOff at ~11:27 was the only loud signal, and the monitoring stack
+was itself on the affected storage. Separately, OpenBao came back sealed and then unreachable, which
+latched the ClusterSecretStore at `InvalidProviderConfig` even after it was unsealed — stalling
+`infra-secrets` and, by dependency, `infra-configs` and `apps`.
+
+The Talos v1.13.9 node roll earlier that morning **did not contribute**. The roll completed at
+10:46, and a full storage canary — bind, mount, write, unstage — passed at ~11:08, twenty-eight
+minutes before the backend disappeared.
+
+What changed afterwards: Alertmanager to two replicas, the heartbeat retuned, a silence wrapper and
+an OnCall relay for internal alerts. A liveness beacon at `health.yo61.net` was added and then
+dropped three commits later as a breaking change. And three new quality criteria — *controls that
+cannot fail*, *sibling search*, and *fix recursion*.
+
+The recovery procedure is written up as [recover from a power
+cut](/how-to/recover-from-a-power-cut).
+
+## Cilium 1.20 and the state archive — 25 to 28 August [#cilium-120]
+
+**26 August.** Cilium 1.20.1 arrives as an ordinary Renovate PR and is
+[**reverted**](https://github.com/yo61/flux-homelab/pull/281). A CNI major is not a dependency bump.
+It gets redesigned as five gated steps and planned as seven tasks, with Renovate held below 1.20 in
+the meantime and a preflight task added to pre-pull images and validate network policies before the
+roll.
+
+**27 August.** The upgrade runs. Gateway API goes to v1.6.1 with Flux owning the CRDs — and stops
+cilium-operator from starting:
+
+<Callout type="warn" title="An optional CRD that was not optional">
+Cilium 1.19.x builds a field indexer for `TLSRoute` at `v1alpha2` and treats a missing REST mapping
+as fatal, despite its own startup check listing that version as optional. Gateway API 1.6.1 ships
+the schema with `served: false`, so the operator went straight into CrashLoopBackOff. Fixed by
+re-serving `v1alpha2` as a temporary patch — guarded by an RFC-6902 test op, so a reordered CRD
+bundle fails the build rather than silently patching the wrong version. Removed the next day, once
+1.20.1 was in and the code path was gone.
+</Callout>
+
+[Cilium 1.20.1 then lands](https://github.com/yo61/flux-homelab/pull/303), Hubble leaf certificate
+validity [goes back](https://github.com/yo61/flux-homelab/pull/304) to the chart default, and the
+day-0 inline floor is re-rendered at 1.20.1 so a rebuild starts where the cluster now is.
+
+The same day, two logging fixes: kernel logs were being ingested twice, and the SCSI "preferred
+minimum I/O size" warning — 53 a day, one per volume attach — was **demoted rather than dropped**.
+The NAS advertises a 4 KiB transfer granularity while reporting a 16 KiB physical block from the
+pool's `volblocksize`; the kernel prints the mismatch and then discards the 4 KiB hint anyway, so
+nothing is misaligned. At that volume there is no cost argument for dropping it, and keeping it
+searchable is free.
+
+**28 August.** [Three decision records](https://github.com/yo61/flux-homelab/pull/313) settle the
+contracts for a Last Light state archive: where the staleness guard belongs, what atomicity and
+emptiness mean for a restore, and how the state CLI verbs are named. That work is still in flight.
+
+## The bug that kept coming back [#silent-controls]
+
+Four unrelated failures in this history share one shape. Something whose entire job was to check,
+sweep, or report ran to completion, exited zero, and produced an answer indistinguishable from "all
+clear" — while never doing the thing at all.
+
+| Date | The control | What it reported | What was true |
+| --- | --- | --- | --- |
+| 6 Aug | [Renovate](https://github.com/yo61/flux-homelab/pull/156) | A successful run | Every update parked behind a second schedule it could never satisfy |
+| 6 Aug | [The log census](https://github.com/yo61/flux-homelab/pull/162) | `0 TOTAL`, exit 0 | The query had failed; stderr was discarded and the response never checked |
+| 10 Aug | [The pod sweep](https://github.com/yo61/flux-homelab/pull/179) | Nothing to clean | It filtered on `phase=Failed` while the leak accumulated under `Succeeded` |
+| 24 Aug | [Loki's `service_name`](https://github.com/yo61/flux-homelab/pull/231) | `k8s/` | Helm's `tpl` ate the Vector template before Vector ever saw it |
+
+The census one is the worst of the four, because it was the instrument: every measurement in the
+log-noise plan ran through that script, and a failed query was indistinguishable from a clean
+cluster.
+
+The last one is instructive in a different way. `service_name: k8s/` replaced Loki's
+`unknown_service` default — which was *less* wrong, because at least it was honest about not
+knowing.
+
+<Callout title="This is now a named quality criterion">
+*Controls that cannot fail* was added on 24 August, in the wake of the nas1 reboot. The [silent
+failures on nas1](/explanation/nas1-silent-failures) page is the same theme on the storage side:
+four separate monitoring systems had failed, none of them said so, and every one presented as a
+healthy, quiet machine.
+</Callout>
+
+## What got written down [#documentation]
+
+Roughly one commit in four is documentation, and it is not README churn.
+
+| Kind | Count | What it holds |
+| --- | --- | --- |
+| Decision records | 27 | Alternatives considered, why one won, trade-offs accepted, what would invalidate it |
+| Design specs | 17 | Written and signed off before implementation starts |
+| Implementation plans | 16 | Task by task, with the verification step named for each |
+| Knowledge registries | 5 | Storage, logging, Cilium — facts, hypotheses, and confirmed rules |
+| Incident reports | 1 | The nas1 reboot, with a kernel-log timeline to the second |
+
+## Where the cluster stands [#current-state]
+
+As of 2026-08-28:
+
+| Layer | Version | Notes |
+| --- | --- | --- |
+| Talos Linux | v1.13.9 | Three nodes, LACP bonds, static per-node iSCSI IQNs |
+| Kubernetes | v1.36.4 | Held below 1.37 until Talos supports it |
+| Cilium | 1.20.1 | Gateway API v1.6.1, day-0 floor re-rendered to match |
+| Storage | tns-csi | iSCSI to nas1; `truenas-iscsi` is the default StorageClass |
+| Logs | Loki 18.11.2 | HA Monolithic on AIStor S3, fed by Vector |
+| Traces | Tempo 2.2.4 | OpenTelemetry Collector, operator on two replicas |
+| Secrets | OpenBao | Projected by External Secrets 2.9.0 |
+| Last Light | v0.28.1 | Kubernetes sandbox backend, managing 18 repositories |
+
+For the reasoning behind these choices organised as themes rather than as a sequence, read [how this
+cluster evolved](/explanation/evolution). For the complete change-by-change index, read [every
+change, and why](/reference/changes).

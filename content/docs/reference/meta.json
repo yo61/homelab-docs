@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "environment",
-    "components"
+    "components",
+    "changes"
   ]
 }

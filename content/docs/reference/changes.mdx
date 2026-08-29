@@ -1,0 +1,214 @@
+---
+title: Every change, and why
+description: A complete index of every substantive change to flux-homelab between July and August 2026, each with the reason it was made and a link to the code
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This is the exhaustive list: 160 changes to `flux-homelab` between the first commit on 2026-07-08
+and 2026-08-28 — what changed, why it changed, and where to read the code.
+
+Every feature, fix, refactor and revert is here, along with the handful of chores that changed the
+cluster rather than a version pin.
+
+For the story rather than the index, read [the build timeline](/explanation/timeline); for the
+reasoning organised as themes, read [how this cluster evolved](/explanation/evolution).
+
+<Callout title="Links go to a private repository">
+`flux-homelab` is private, so the pull-request links below resolve only if you have access to it.
+The commit messages they point at are where the detail lives — most carry several paragraphs of
+reasoning that this table compresses to a sentence.
+</Callout>
+
+Renovate dependency bumps and documentation-only commits are omitted — they make up the rest of the
+361 commits, and are better read in the repository's own history.
+
+## Bring-up — 8 to 22 July [#bring-up]
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 8 Jul | [Cilium, OpenBao and ESO on Talos](https://github.com/yo61/flux-homelab/commit/834f9ba) | First commit. The add-on layer moves into a repo Flux reconciles, in response to a kubelet flag that had silently drifted away |
+| 8 Jul | [Conventional commits enforced by hook](https://github.com/yo61/flux-homelab/pull/3) | Machine-readable history from the third commit onward — the reason this index can exist |
+| 8 Jul | [Drop the duplicate PodSecurity block](https://github.com/yo61/flux-homelab/pull/4) | As a strategic-merge patch it appended to `exemptions.namespaces`, listing `kube-system` twice; the apiserver refused to start and took controller-manager and scheduler down with it |
+| 8 Jul | [Correct the Gateway API CRD path](https://github.com/yo61/flux-homelab/pull/5) | `config/crd/standard` carries no `kustomization.yaml`, so the kustomize build could not resolve it |
+| 8 Jul | [Allow privileged PodSecurity for node-exporter](https://github.com/yo61/flux-homelab/pull/6) | The DaemonSet needs hostNetwork, hostPID, hostPath mounts of `/proc`, `/sys` and `/`, and hostPort 9100 |
+| 8 Jul | [Pin a static iSCSI initiator IQN](https://github.com/yo61/flux-homelab/pull/7) | Talos regenerates `initiatorname.iscsi` from node identity on every wipe, so a rebuilt node falls out of TrueNAS's allowed-initiators list and every volume fails to mount |
+| 8 Jul | [Set terminated-pod-gc-threshold to 100](https://github.com/yo61/flux-homelab/pull/9) | The Talos default is 12500, so Completed and Error pods accumulate effectively forever |
+| 9 Jul | [Flux-managed GatewayClass](https://github.com/yo61/flux-homelab/pull/16) | The chart's template is gated on the Gateway API CRDs being present at render time, and the Talos inline manifest renders before they exist |
+| 9 Jul | [Enable cert-manager's Gateway API support](https://github.com/yo61/flux-homelab/pull/17) | The gateway-shim is off by default, so the `cluster-issuer` annotation on the Gateway was ignored |
+| 9 Jul | [Install Gateway API CRDs at day-0](https://github.com/yo61/flux-homelab/pull/18) | cilium-operator runs a one-shot check at startup and *permanently* disables its Gateway API controller if they are absent |
+| 14 Jul | [Rework Phase 1 teardown](https://github.com/yo61/flux-homelab/pull/21) | `talosctl reset --wait` defaults to true and tracks progress until a 30-minute timeout; nodes now PXE straight to maintenance mode |
+| 14 Jul | [Expose services on `*.lab.yo61.net`](https://github.com/yo61/flux-homelab/pull/23) | Grafana, Prometheus, Alertmanager and Hubble reachable through the shared homelab Gateway, each route co-located with its app |
+| 14 Jul | [Grafana admin credentials from OpenBao](https://github.com/yo61/flux-homelab/pull/25) | Replaces the chart's randomly generated password with a declared credential delivered by ESO — "no secrets in git" applied to a real workload |
+| 14 Jul | [Declarative UniFi DNS via external-dns](https://github.com/yo61/flux-homelab/pull/26) | Replaces a one-time manual UDM wildcard record with per-host A records driven off the HTTPRoutes |
+| 14 Jul | [Correct the webhook image tag](https://github.com/yo61/flux-homelab/pull/27) | The published tags carry no `v` prefix, so `v0.10.9` did not exist |
+| 14 Jul | [Enable TLS verification explicitly](https://github.com/yo61/flux-homelab/pull/28) | The webhook defaults `UNIFI_SKIP_TLS_VERIFY` to true, so omitting it left verification *disabled* — the runtime WARN confirmed it |
+| 20 Jul | [Renovate on a dedicated GitHub App](https://github.com/yo61/flux-homelab/pull/30) | A pinned cluster rots quietly unless something watches; an App is scoped, rotatable and not tied to a human |
+| 20 Jul | [Use App client-id, not app-id](https://github.com/yo61/flux-homelab/pull/32) | `app-id` is deprecated in the action |
+| 20 Jul | [Grant vulnerability-alert read](https://github.com/yo61/flux-homelab/pull/33) | Renovate cannot prioritise security updates it cannot see |
+| 20 Jul | [Re-render the day-0 manifest for 1.19.6](https://github.com/yo61/flux-homelab/pull/37) | The inline bootstrap floor is a rendered artifact, so a chart bump does not update it |
+| 21 Jul | [Cilium day-2 upgrades under Flux](https://github.com/yo61/flux-homelab/pull/39) | A CNI welded into machine config cannot be upgraded by the thing that depends on it — so two layers read one set of values |
+| 21 Jul | [Lower the bootstrap floor to 1.19.5](https://github.com/yo61/flux-homelab/pull/42) | A deliberate test: a real rebuild has to converge day-0 forward to the day-2 target |
+| 21 Jul | [Maintenance-mode check in the runbook](https://github.com/yo61/flux-homelab/pull/44) | The teardown assumed a state it never verified |
+| 21 Jul | [Restore the floor to 1.19.6](https://github.com/yo61/flux-homelab/pull/45) | Convergence proven; the floor goes back to target |
+| 22 Jul | [Taskfile and the iscsi-reclaim script](https://github.com/yo61/flux-homelab/pull/47) | Repeatable operations lived in people's heads and scattered notes; `task --list` becomes the index |
+
+## Last Light lands — 22 to 30 July [#last-light]
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 22 Jul | [KVM device plugin and namespace](https://github.com/yo61/flux-homelab/commit/57e5662) | Agent workloads run in nested VMs, so `/dev/kvm` has to be a schedulable resource |
+| 22 Jul | [OpenBao ExternalSecrets for harness and tunnel](https://github.com/yo61/flux-homelab/commit/6698399) | Every credential the agent needs arrives by projection, none by hand |
+| 22 Jul | [Overlay config and state PVC](https://github.com/yo61/flux-homelab/commit/b686020) | The harness keeps a SQLite state database that must survive a pod restart |
+| 22 Jul | [Harness Deployment and Service](https://github.com/yo61/flux-homelab/commit/ea31591) | Where the four preceding commits converge: the KVM device request, the state PVC, the projected secrets and the config all mount here, and the Service fronts port 8644 for the tunnel and the dashboard route |
+| 22 Jul | [Cloudflare Tunnel for webhook ingress](https://github.com/yo61/flux-homelab/commit/3360d92) | GitHub has to reach the harness without an inbound firewall hole |
+| 22 Jul | [LAN dashboard HTTPRoute](https://github.com/yo61/flux-homelab/commit/aeb3d5d) | The dashboard is internal-only, so it goes on the homelab gateway rather than the tunnel |
+| 22 Jul | [Cilium egress lockdown](https://github.com/yo61/flux-homelab/commit/6e68c2e) | An agent that can run arbitrary code should have no reach into the LAN |
+| 22 Jul | [Wire lastlight into the Flux apps kustomization](https://github.com/yo61/flux-homelab/commit/004da2d) | Nothing exists until Flux is told to reconcile it |
+| 22 Jul | [Set managed repo, bot name and dashboard host](https://github.com/yo61/flux-homelab/commit/d8c3ea7) | First real configuration, starting from a single repository |
+| 22 Jul | [Redirect the dashboard root to `/admin`](https://github.com/yo61/flux-homelab/commit/65534ff) | The root path served nothing useful |
+| 22 Jul | [Pin `deploy.version`](https://github.com/yo61/flux-homelab/commit/a735f10) | The drift detector compares the running core against this pin, and a stale value shows a false redeploy banner |
+| 22 Jul | [QEMU-enabled agent image](https://github.com/yo61/flux-homelab/commit/b66bae2) | The gondolin sandbox backend needs QEMU in the image, which upstream did not ship |
+| 23 Jul | [Switch to the QEMU image with SYS_RESOURCE](https://github.com/yo61/flux-homelab/commit/6058758) | Nested virtualisation needs the capability as well as the device |
+| 23 Jul | [Manage all yo61 repos; allow Terraform egress](https://github.com/yo61/flux-homelab/commit/638b59b) | Expands `managedRepos` from a single starter repo to all 14 active ones, now the App is scoped to all repositories |
+| 23 Jul | [Allow registry egress; concurrency to 3](https://github.com/yo61/flux-homelab/commit/2236cdc) | Repos with a container build phase could not pull images through the strict allowlist |
+| 23 Jul | [Default model to Sonnet 5](https://github.com/yo61/flux-homelab/commit/d768d21) | Near-Opus quality on the coding and agentic work that is Last Light's core |
+| 23 Jul | [Remove `LASTLIGHT_MODEL` from the ESO `.env`](https://github.com/yo61/flux-homelab/commit/70ad19c) | The model was set in two places and env takes precedence, so the git-tracked value was silently dead |
+| 24 Jul | [Serialize workflow runs to one KVM device](https://github.com/yo61/flux-homelab/commit/1c23aae) | Concurrency above 1 queues on a resource the scheduler cannot see — there is one `/dev/kvm` per node |
+| 27 Jul | [k8s sandbox backend go-live](https://github.com/yo61/flux-homelab/pull/95) | RBAC plus the harness cutover from gondolin to the Kubernetes backend |
+| 27 Jul | [Roll the harness back to gondolin](https://github.com/yo61/flux-homelab/commit/74d7835) | **Revert.** The deployed image predated the backend it was being cut over to |
+| 27 Jul | [Re-apply the cutover, pinned to image 2a38b47](https://github.com/yo61/flux-homelab/pull/96) | Now that a harness image containing the k8s sandbox backend actually exists |
+| 28 Jul | [Harness @dbef27e — artifact store](https://github.com/yo61/flux-homelab/commit/9f65891) | Upstream Plan 8: the k8s sandbox needed somewhere to put run artifacts |
+| 28 Jul | [Spegel P2P image mirror](https://github.com/yo61/flux-homelab/pull/97) | Cold nodes pulled every image over the WAN — the 398 MB sandbox image took ~28 s, blowing the harness's pod-start budget |
+| 28 Jul | [Spegel ServiceMonitor and dashboard](https://github.com/yo61/flux-homelab/pull/98) | A cache you cannot see the hit rate of is not worth having |
+| 28 Jul | [Provision a corrected Spegel dashboard](https://github.com/yo61/flux-homelab/pull/99) | The bundled one references `${DS_PROMETHEUS}`, an import-time placeholder the sidecar never substitutes |
+| 28 Jul | [Harness @28ed2f0 — budget and quota backpressure](https://github.com/yo61/flux-homelab/pull/100) | Adds a 180 s container-start budget and turns provision-time quota rejection into a requeue |
+| 28 Jul | [Harness @1af3daa — inline reviews](https://github.com/yo61/flux-homelab/pull/101) | A GitHub-API diff fallback, so k8s PR reviews post inline comments instead of body-only |
+| 28 Jul | [Harness @0a23f59 — quota throw-path requeue](https://github.com/yo61/flux-homelab/pull/102) | Over-quota triage runs requeued instead of terminal-failing red |
+| 28 Jul | [Harness @ff39a9c — root-cause fix](https://github.com/yo61/flux-homelab/pull/103) | The previous requeue fix treated a symptom |
+| 28 Jul | [Harness @e38eb79 — integration build](https://github.com/yo61/flux-homelab/pull/104) | Three fixes validated together on-cluster before splitting into upstream PRs |
+| 28 Jul | [Harness @25a6eba — back onto main](https://github.com/yo61/flux-homelab/pull/105) | Off the throwaway integration build, now the fixes have merged |
+| 29 Jul | [Full upstreamed k8s backend @230e839](https://github.com/yo61/flux-homelab/pull/107) | Smoke test before the PR to nearform |
+| 30 Jul | [Upstream v0.21.13; drop the fork image](https://github.com/yo61/flux-homelab/pull/108) | The k8s sandbox backend was upstreamed and released, so the fork-built QEMU images are no longer needed |
+| 30 Jul | [Validate manifests with kustomize + kubeconform](https://github.com/yo61/flux-homelab/pull/110) | A GitOps repo where a bad manifest reaches the cluster before anyone notices needs a gate in front of the commit |
+| 30 Jul | [Clear inherited git env in validate.sh](https://github.com/yo61/flux-homelab/pull/111) | kustomize shells out to `git` for remote bases, and pre-commit hooks leak `GIT_DIR` into child processes, so the fetch targeted this repo |
+
+## Observability — 25 July to 3 August [#observability]
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 25 Jul | [Logging namespace and loki-s3 secret](https://github.com/yo61/flux-homelab/commit/f4069ba) | Privileged PSA, because Vector hostPath-mounts `/var/log/pods`; the S3 key arrives from OpenBao |
+| 25 Jul | [Loki in HA Monolithic on AIStor S3](https://github.com/yo61/flux-homelab/commit/4ec3c5b) | Three replicas with replication factor 3 — Simple Scalable was more moving parts than a three-node cluster earns |
+| 25 Jul | [Loki datasource in Grafana](https://github.com/yo61/flux-homelab/commit/52e0532) | Logs belong next to metrics in one UI, not a second tool |
+| 25 Jul | [Disable Loki multi-tenancy](https://github.com/yo61/flux-homelab/commit/e83b45f) | The chart defaults to `auth_enabled: true`, which 401s any request without an `X-Scope-OrgID` header |
+| 25 Jul | [Vector agent for pod logs](https://github.com/yo61/flux-homelab/commit/949bd6a) | A per-node DaemonSet tailing `/var/log/pods` and pushing to the Loki gateway |
+| 25 Jul | [Disable Vector's generated Services](https://github.com/yo61/flux-homelab/commit/11a6193) | The agent has no listening sources — it only pushes — so the chart's Services front nothing |
+| 25 Jul | [Ship Talos host and kernel logs](https://github.com/yo61/flux-homelab/commit/aeb9d5c) | A TCP socket source on a pinned ClusterIP, because Talos ships logs out rather than writing files a agent could tail |
+| 25 Jul | [Make truenas-iscsi the default StorageClass](https://github.com/yo61/flux-homelab/commit/a7382f7) | It is the cluster's only class; without a default, PVCs that omit `storageClassName` hang Pending forever |
+| 25 Jul | [Promote Talos service and level to labels](https://github.com/yo61/flux-homelab/commit/1ba1dec) | Talos's hyphenated field names are not label-safe, so a remap renames them before indexing |
+| 25 Jul | [Cluster Logs Grafana dashboard](https://github.com/yo61/flux-homelab/commit/9f2b600) | Provisioned as a labelled ConfigMap so the Grafana sidecar picks it up — dashboards are config, not clicks |
+| 25 Jul | [Extract pod log level into `detected_level`](https://github.com/yo61/flux-homelab/commit/9af4178) | Best-effort parse of JSON, logfmt and klog prefixes, so "show me errors" works across every app |
+| 25 Jul | [Quieten Loki's own logs to warn](https://github.com/yo61/flux-homelab/commit/d4afec8) | The logging namespace was the cluster's top log producer, largely Loki ingesting its own request logs |
+| 25 Jul | [Filter the dashboard on detected level](https://github.com/yo61/flux-homelab/commit/c7da623) | Show the message and useful metadata rather than the raw JSON envelope |
+| 26 Jul | [Drop gateway 2xx access logs at Vector](https://github.com/yo61/flux-homelab/commit/236b133) | The nginx access log was about half the logging namespace — Vector ingesting every `POST /push 204` it had just sent |
+| 26 Jul | [Match the gateway access log status field](https://github.com/yo61/flux-homelab/commit/7d84fc1) | The filter had never dropped anything: nginx's `main` format puts `$status` *before* the quoted request, so the regex missed |
+| 26 Jul | [Promote levels for Talos extension services](https://github.com/yo61/flux-homelab/commit/09991a8) | Extension services write plain text with no severity, so Talos tags real errors as "info" |
+| 26 Jul | [Known-noise filter on the dashboard](https://github.com/yo61/flux-homelab/commit/e4ffaf7) | A default-on toggle, so the error-rate stat means something without hiding the lines permanently |
+| 27 Jul | [Bound Loki's read fan-out](https://github.com/yo61/flux-homelab/commit/265aa2c) | A wide query sharded into hundreds of concurrent S3 GETs with no chunk cache, saturating TLS handshakes to the NAS |
+| 27 Jul | [Relax query parallelism; correct the record](https://github.com/yo61/flux-homelab/pull/86) | The real root cause was AIStor pinned to `GOMAXPROCS=2` on the NAS, not Loki's fan-out — the first fix had over-corrected |
+| 27 Jul | [Size the chunks cache to 1 GB](https://github.com/yo61/flux-homelab/pull/87) | At 256 MB it churned 16k evictions in 85 minutes and memcached returned out-of-memory on large chunks |
+| 27 Jul | [Last Light service dashboard](https://github.com/yo61/flux-homelab/pull/93) | Metrics and logs for one service in one place |
+| 27 Jul | [Deploy grafana-image-renderer](https://github.com/yo61/flux-homelab/pull/94) | Server-side PNG rendering, so dashboard snapshots and scheduled reports work |
+| 30 Jul | [Move dynamic fields to structured metadata](https://github.com/yo61/flux-homelab/pull/112) | Vector 0.57 added template confinement, rejecting fully-dynamic label templates at startup — the DaemonSet crash-looped ~760 times and **no logs reached Loki at all** |
+| 30 Jul | [Keep labels static; dynamic fields in the body](https://github.com/yo61/flux-homelab/pull/113) | Confinement rejects *any* templated sink field lacking a literal prefix, structured metadata included — not just routing labels |
+| 30 Jul | [Update dashboards for the JSON-body schema](https://github.com/yo61/flux-homelab/pull/114) | Labels collapsed to `source`, so every query using `{namespace=…}` as a stream selector had to move |
+| 30 Jul | [Real Prometheus dropdowns, All-aware](https://github.com/yo61/flux-homelab/pull/115) | The previous change made the variables textboxes, which broke on stale `var-*=$__all` URL state |
+| 30 Jul | [Hide the datasource pickers](https://github.com/yo61/flux-homelab/pull/116) | They exist only for interpolation; showing them invited a viewer to break the dashboard |
+| 30 Jul | [Populate the Talos service dropdown](https://github.com/yo61/flux-homelab/pull/117) | Talos services live only in the Loki JSON body and not in Prometheus, so neither `label_values` source worked |
+| 31 Jul | [OpenTelemetry Collector and Tempo](https://github.com/yo61/flux-homelab/pull/118) | One OTLP ingest point, and a trace backend to send it to |
+| 31 Jul | [Non-deprecated exporter type names](https://github.com/yo61/flux-homelab/pull/119) | contrib 0.156.0 warns on the old aliases |
+| 31 Jul | [Sweep power-cut ghost pods](https://github.com/yo61/flux-homelab/pull/122) | A hard power loss gives kubelet no shutdown signal, so on reboot it marks its pods `Failed` and nothing cleans them up |
+| 31 Jul | [GC deletes fire-and-forget](https://github.com/yo61/flux-homelab/pull/123) | A periodic sweep needn't block on confirmation; `--wait=false` keeps RBAC at list+delete with no watch verb and cannot hang |
+| 31 Jul | [OTel cost, performance and trace rows](https://github.com/yo61/flux-homelab/pull/124) | What the agent costs and how long it takes, from the traces it already emits |
+| 31 Jul | [Sort the traces table by duration](https://github.com/yo61/flux-homelab/pull/125) | The panel exists to spot slow runs and defaulted to sorting by start time |
+| 31 Jul | [Dashboard review fixes](https://github.com/yo61/flux-homelab/pull/126) | Surface scope, datasource references and sort order, from live review |
+| 31 Jul | [Agent-overhead stat](https://github.com/yo61/flux-homelab/pull/127) | Captures orchestration cost outside metered phases — agent surface minus phase surface |
+| 1 Aug | [Point at the fork structured-logging build](https://github.com/yo61/flux-homelab/pull/128) | Validate structured JSON log levels on-cluster before asking upstream to take them |
+| 1 Aug | [Promote JSON fields to the event root](https://github.com/yo61/flux-homelab/pull/129) | Lifts `msg`, `component` and `trace_id` out of the envelope, with the root winning collisions |
+| 1 Aug | [Stop leaking unnormalized levels](https://github.com/yo61/flux-homelab/pull/130) | The unconditional merge promoted a raw parsed level whenever normalization left it unset |
+| 1 Aug | [Filter sandbox stdout and clone containers](https://github.com/yo61/flux-homelab/pull/131) | The sandbox emits an NDJSON event stream that is noise in a log aggregator |
+| 3 Aug | [Unblock semgrep egress](https://github.com/yo61/flux-homelab/pull/135) | `semgrep --config auto` fetches rulesets from a host absent from the strict sandbox allowlist |
+| 3 Aug | [Align `deploy.version` with the image](https://github.com/yo61/flux-homelab/pull/136) | The pin was left behind at v0.22.0 when the image went to v0.23.8, so the drift detector showed a false banner |
+
+## Alerting and automation — 4 to 14 August [#alerting]
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 4 Aug | [Self-hosted ntfy server](https://github.com/yo61/flux-homelab/pull/138) | Alerts need somewhere to go that is not email, and that the cluster owns |
+| 4 Aug | [Move app credentials off the bring-up path](https://github.com/yo61/flux-homelab/pull/141) | `infrastructure/secrets/` runs with `wait: true` and everything queues behind it, so an application secret there is a bootstrap gate |
+| 4 Aug | [ntfy on its own cloudflared tunnel](https://github.com/yo61/flux-homelab/pull/140) | Pushes must reach the phone away from home, and must not share fate with an application tunnel |
+| 4 Aug | [Service standup CLI](https://github.com/yo61/flux-homelab/pull/145) | Adding a service meant the same seven manual steps every time |
+| 4 Aug | [Heartbeat, ntfy bridge and Alertmanager routing](https://github.com/yo61/flux-homelab/pull/146) | A dead-man's switch, so silence from the alerting path is distinguishable from a quiet cluster |
+| 6 Aug | [Make control-plane metrics scrapeable](https://github.com/yo61/flux-homelab/pull/147) | Three alerts had been firing since the cluster was built, and became audible the moment Alertmanager gained a real receiver |
+| 6 Aug | [Per-namespace error log census script](https://github.com/yo61/flux-homelab/pull/153) | You cannot reduce noise you have not measured |
+| 6 Aug | [cert-manager to v1.21.1](https://github.com/yo61/flux-homelab/pull/154) | v1.21.0 registers the same Secret informer handler once per sub-controller, so every unrelated Secret event logs repeatedly |
+| 6 Aug | [Detect zerolog console levels](https://github.com/yo61/flux-homelab/pull/155) | cloudflared writes a three-letter level token that matched none of the JSON, logfmt or klog detectors |
+| 6 Aug | [Drop the Renovate config schedule](https://github.com/yo61/flux-homelab/pull/156) | A second schedule sat on top of the workflow cron; GitHub delayed the run ~3.5 h, so it fired outside its own window **every time** and parked every update while reporting success |
+| 6 Aug | [Install a pinned TLSRoute CRD](https://github.com/yo61/flux-homelab/pull/158) | cilium-operator lists `TLSRouteList` without the support guard it uses elsewhere — ~268 lines a day |
+| 6 Aug | [Stop the census reporting failure as zero](https://github.com/yo61/flux-homelab/pull/162) | It discarded stderr and never checked the response, so a failed query printed `0 TOTAL` and exited 0 — on the instrument every measurement ran through |
+| 6 Aug | [Force sandbox-sweep to prove it runs](https://github.com/yo61/flux-homelab/pull/166) | The cron registers via `registerDirect`, which logs nothing, so there was no evidence either way |
+| 6 Aug | [Remove the sandbox-sweep diagnostic](https://github.com/yo61/flux-homelab/pull/167) | **Revert.** The test answered it: the sweep runs and reclaimed 18 of 19 PVCs |
+| 10 Aug | [Reclaim orphaned iSCSI sessions](https://github.com/yo61/flux-homelab/pull/174) | tns-csi never logs out a session on unstage, so every deleted volume strands one retrying against a target that no longer exists |
+| 10 Aug | [Sweep Succeeded tombstones](https://github.com/yo61/flux-homelab/pull/179) | 20 pods across 9 namespaces had sat Completed for 15 days; the existing sweep filtered `phase=Failed` server-side and structurally could not match them |
+| 10 Aug | [Manage ycst-admin-docs](https://github.com/yo61/flux-homelab/pull/182) | Another repo joins the agent's remit |
+| 11 Aug | [Run the test suite in a cleared environment](https://github.com/yo61/flux-homelab/pull/184) | A test asserting a `ValueError` passed because the code fell back to the shell's environment variable instead |
+| 11 Aug | [Manage commitlint-github-action](https://github.com/yo61/flux-homelab/pull/187) | The first fork in `managedRepos`, and the only entry whose default branch is `master` rather than `main` — so it exercises whether the harness resolves the default branch from the API instead of assuming |
+| 11 Aug | [Manage agent-team-topologies and kuard](https://github.com/yo61/flux-homelab/pull/189) | Neither was in `managedRepos`, so the agent had reviewed nothing in them |
+| 13 Aug | [Switch the model provider to OpenAI](https://github.com/yo61/flux-homelab/pull/198) | Eight per-phase keys pinned, with the other providers' keys kept for comparison |
+| 13 Aug | [Generate the ConfigMap with a content hash](https://github.com/yo61/flux-homelab/pull/200) | A config-only change left the Deployment spec byte-identical, so Flux had nothing to roll and the change never took effect |
+| 13 Aug | [Run security-review on GLM 5.2](https://github.com/yo61/flux-homelab/pull/203) | A deliberate production experiment on the highest-volume, lowest-stakes phase |
+| 14 Aug | [Automerge patch and minor on a daily cron](https://github.com/yo61/flux-homelab/pull/210) | `prHourlyLimit` defaults to 2 and a weekly cron is one "hour", so updates were capped at two per week |
+
+## Talos, storage and the nas1 reboot — 24 August [#nas1]
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 24 Aug | [Talos v1.13.9, tns-csi to open-iscsi 2.1.12](https://github.com/yo61/flux-homelab/pull/225) | v1.13.8 moved the extension to 2.1.12, and the container's `iscsiadm` must match or the management IPC pairing breaks |
+| 24 Aug | [Add realtek-firmware](https://github.com/yo61/flux-homelab/pull/228) | Both bond members on every node are RTL8125B controllers that had been running without their microcode |
+| 24 Aug | [Drop kube-apiserver's etcd gRPC churn](https://github.com/yo61/flux-homelab/pull/227) | 765 lines an hour, ~8,600 a day — effectively the cluster's entire standing error stream, all of it benign |
+| 24 Aug | [Populate Loki's `service_name`](https://github.com/yo61/flux-homelab/pull/229) | Loki indexes the field whether you set it or not, and unset it auto-fills `unknown_service` for every stream |
+| 24 Aug | [Escape the Vector templates](https://github.com/yo61/flux-homelab/pull/231) | The chart renders `customConfig` through Helm's `tpl`, which evaluated `{{ .service_name }}` against the *chart's* context and emitted `k8s/` with nothing after it |
+| 24 Aug | [OTel operator on two replicas with a PDB](https://github.com/yo61/flux-homelab/pull/230) | Its webhooks are registered `failurePolicy=Fail`, so a single unavailable replica blocks the resources it admits |
+| 24 Aug | [Silence wrapper, heartbeat docs, liveness beacon](https://github.com/yo61/flux-homelab/pull/238) | `task silence` shells out to amtool inside Alertmanager, so silencing does not need a UI |
+| 24 Aug | [OnCall relay for internal alerts](https://github.com/yo61/flux-homelab/pull/239) | A separate integration from the heartbeat's, so "the cluster is broken" and "the cluster is gone" are distinguishable |
+| 24 Aug | [Send `op item create` JSON on stdin](https://github.com/yo61/flux-homelab/pull/240) | Creating the tunnel token failed on invalid piped JSON, leaving a Cloudflare tunnel created and its secret unstored |
+| 24 Aug | [Give the item a PASSWORD-purpose field](https://github.com/yo61/flux-homelab/pull/241) | `op` rejects a PASSWORD-category item that has no field with that purpose |
+| 24 Aug | [Store the secret in the field the ref names](https://github.com/yo61/flux-homelab/pull/242) | The item was created but the reference could not read it |
+| 24 Aug | [Liveness beacon at health.yo61.net](https://github.com/yo61/flux-homelab/pull/243) | On its own tunnel: the thing that tells you everything else is broken must not share fate with an application |
+| 24 Aug | [Alertmanager on two replicas; heartbeat retuned](https://github.com/yo61/flux-homelab/pull/244) | Detection of total loss drops from ~13 minutes to ~5, which is what makes silence worth trusting |
+| 24 Aug | [Drop the liveness beacon](https://github.com/yo61/flux-homelab/pull/246) | **Breaking change.** The synthetic check it fed did not earn the tunnel and the attack surface |
+
+## Dashboards, Cilium 1.20 and the state archive — 25 to 28 August [#cilium-120]
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 25 Aug | [File every dashboard under Platform or Services](https://github.com/yo61/flux-homelab/pull/250) | Twenty-nine dashboards were sitting in Grafana's General root |
+| 25 Aug | [Name and colour the success/failure series](https://github.com/yo61/flux-homelab/pull/255) | The legend read `success=true` / `success=false`, truncating to "succ…" twice in a quarter-width panel |
+| 26 Aug | [Grant Renovate Commit statuses](https://github.com/yo61/flux-homelab/pull/263) | It had run green daily for 11 days and opened zero PRs; the run now fails when it opens nothing |
+| 26 Aug | [Commit statuses must be write, not read](https://github.com/yo61/flux-homelab/pull/264) | With `minimumReleaseAge` set Renovate *writes* a status, so read alone was one axis short |
+| 26 Aug | [Revert Cilium 1.20.1](https://github.com/yo61/flux-homelab/pull/281) | **Revert.** A CNI major is not a dependency bump, and arrived as one |
+| 26 Aug | [`task flux:pending`](https://github.com/yo61/flux-homelab/pull/286) | Twelve merged commits sat unapplied for hours and nothing said so; `flux get kustomizations` reported the wrong thing |
+| 26 Aug | [Cilium preflight task](https://github.com/yo61/flux-homelab/pull/289) | Pre-pulls images and validates network policies before a roll, so the upgrade is not the first thing to touch them |
+| 26 Aug | [Hold Renovate below Cilium 1.20](https://github.com/yo61/flux-homelab/pull/291) | The upgrade is a planned sequence, so automation must not front-run it |
+| 27 Aug | [Don't fail flux:pending mid-reconcile](https://github.com/yo61/flux-homelab/pull/290) | It reported a hard failure for layers that were simply reconciling and Ready moments later |
+| 27 Aug | [Gateway API to v1.6.1, CRDs to Flux](https://github.com/yo61/flux-homelab/pull/300) | 1.20 expects 1.6.1; the Talos bundle stays as a bootstrap floor so the operator's startup check still finds it |
+| 27 Aug | [Re-serve TLSRoute v1alpha2](https://github.com/yo61/flux-homelab/pull/301) | Cilium 1.19.x treats a missing REST mapping for it as fatal despite calling it optional, and 1.6.1 ships it `served: false` — the operator crash-looped |
+| 27 Aug | [Cilium to 1.20.1](https://github.com/yo61/flux-homelab/pull/303) | Task 4 of the planned sequence |
+| 27 Aug | [Shorten Hubble leaf cert validity](https://github.com/yo61/flux-homelab/pull/304) | The upgrade failed and Flux rolled back: certgen crash-looped, cert generation never completed, and Helm timed out after 5 minutes |
+| 27 Aug | [Re-render the day-0 floor at 1.20.1](https://github.com/yo61/flux-homelab/pull/305) | So a rebuild starts where the cluster now is, not one major behind |
+| 27 Aug | [Stop kernel double-ingestion; demote the SCSI warning](https://github.com/yo61/flux-homelab/pull/294) | 53 lines a day the kernel itself discards the hint from — demoted rather than dropped, because at that volume there is no cost argument for hiding it |
+| 27 Aug | [File dashboards by layer with a naming convention](https://github.com/yo61/flux-homelab/pull/295) | The Platform/Services axis put Spegel in the right place for the wrong reason |
+| 27 Aug | [`task talos:pending`](https://github.com/yo61/flux-homelab/pull/306) | Flux has a controller so merged changes apply themselves; Talos has none, so machine config can sit unapplied indefinitely |
+| 28 Aug | [gitignore `talsecret*` by prefix](https://github.com/yo61/flux-homelab/pull/309) | The list enumerated four exact spellings and any other variant fell straight through |
+| 28 Aug | [Hold Kubernetes below 1.37](https://github.com/yo61/flux-homelab/pull/308) | Talos does not support it yet, and Renovate would otherwise offer it |
+| 28 Aug | [Remove the TLSRoute v1alpha2 shim](https://github.com/yo61/flux-homelab/pull/311) | 1.20.1's operator has no v1alpha2 references at all, so the temporary patch had done its job |

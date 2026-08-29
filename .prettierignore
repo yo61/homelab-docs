@@ -11,5 +11,14 @@ pnpm-lock.yaml
 
 # Prose is owned by markdownlint (.markdownlint.jsonc) and, for content/, by the
 # MDX build. Letting a code formatter reflow it would fight both.
+#
+# The directory entries alone left root-level markdown to oxfmt, which formats
+# it as prose and fails `oxfmt --check` on any note that is not already in its
+# style -- blocking every commit until the note is reformatted, whether or not
+# it is part of the change. markdownlint already owns the repo root (see the
+# MD034/MD051 scoping note in content/.markdownlint.jsonc), so exclude markdown
+# by extension rather than by location.
+*.md
+*.mdx
 content/
 docs/

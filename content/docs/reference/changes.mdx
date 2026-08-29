@@ -60,7 +60,7 @@ Renovate dependency bumps and documentation-only commits are omitted — they ma
 | 22 Jul | [KVM device plugin and namespace](https://github.com/yo61/flux-homelab/commit/57e5662) | Agent workloads run in nested VMs, so `/dev/kvm` has to be a schedulable resource |
 | 22 Jul | [OpenBao ExternalSecrets for harness and tunnel](https://github.com/yo61/flux-homelab/commit/6698399) | Every credential the agent needs arrives by projection, none by hand |
 | 22 Jul | [Overlay config and state PVC](https://github.com/yo61/flux-homelab/commit/b686020) | The harness keeps a SQLite state database that must survive a pod restart |
-| 22 Jul | [Harness Deployment and Service](https://github.com/yo61/flux-homelab/commit/ea31591) | The agent itself |
+| 22 Jul | [Harness Deployment and Service](https://github.com/yo61/flux-homelab/commit/ea31591) | Where the four preceding commits converge: the KVM device request, the state PVC, the projected secrets and the config all mount here, and the Service fronts port 8644 for the tunnel and the dashboard route |
 | 22 Jul | [Cloudflare Tunnel for webhook ingress](https://github.com/yo61/flux-homelab/commit/3360d92) | GitHub has to reach the harness without an inbound firewall hole |
 | 22 Jul | [LAN dashboard HTTPRoute](https://github.com/yo61/flux-homelab/commit/aeb3d5d) | The dashboard is internal-only, so it goes on the homelab gateway rather than the tunnel |
 | 22 Jul | [Cilium egress lockdown](https://github.com/yo61/flux-homelab/commit/6e68c2e) | An agent that can run arbitrary code should have no reach into the LAN |
@@ -162,7 +162,7 @@ Renovate dependency bumps and documentation-only commits are omitted — they ma
 | 10 Aug | [Sweep Succeeded tombstones](https://github.com/yo61/flux-homelab/pull/179) | 20 pods across 9 namespaces had sat Completed for 15 days; the existing sweep filtered `phase=Failed` server-side and structurally could not match them |
 | 10 Aug | [Manage ycst-admin-docs](https://github.com/yo61/flux-homelab/pull/182) | Another repo joins the agent's remit |
 | 11 Aug | [Run the test suite in a cleared environment](https://github.com/yo61/flux-homelab/pull/184) | A test asserting a `ValueError` passed because the code fell back to the shell's environment variable instead |
-| 11 Aug | [Manage commitlint-github-action](https://github.com/yo61/flux-homelab/pull/187) | |
+| 11 Aug | [Manage commitlint-github-action](https://github.com/yo61/flux-homelab/pull/187) | The first fork in `managedRepos`, and the only entry whose default branch is `master` rather than `main` — so it exercises whether the harness resolves the default branch from the API instead of assuming |
 | 11 Aug | [Manage agent-team-topologies and kuard](https://github.com/yo61/flux-homelab/pull/189) | Neither was in `managedRepos`, so the agent had reviewed nothing in them |
 | 13 Aug | [Switch the model provider to OpenAI](https://github.com/yo61/flux-homelab/pull/198) | Eight per-phase keys pinned, with the other providers' keys kept for comparison |
 | 13 Aug | [Generate the ConfigMap with a content hash](https://github.com/yo61/flux-homelab/pull/200) | A config-only change left the Deployment spec byte-identical, so Flux had nothing to roll and the change never took effect |

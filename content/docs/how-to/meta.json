@@ -5,6 +5,7 @@
     "rebuild-the-cluster",
     "recover-from-a-power-cut",
     "diagnose-zfs-checksum-errors",
+    "replace-a-drive-in-a-zpool",
     "drain-a-node",
     "add-a-new-service",
     "set-up-logging",

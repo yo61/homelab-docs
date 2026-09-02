@@ -1,0 +1,368 @@
+---
+title: Replace a drive in a ZFS pool
+description: Identify the right disk physically, get the replacement to enumerate on a backplane that supplies 3.3 V, and resilver without dropping below full redundancy
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Replacing a pool member is two commands. Everything that makes it take a morning happens
+before you get to run them: confirming which physical drive is the failing one, and getting
+the new drive to appear at all.
+
+The worked example is `nas1` in September 2026, replacing `8DJ5DESY` — an Ultrastar He12
+that had lost its helium seal — in the four-wide `raidz2` pool `space`.
+
+## 1. Check what actually arrived
+
+Three properties of the replacement matter, and all three are readable from the label
+before you open the case.
+
+**Interface.** The Ultrastar He12 ships in SATA and SAS variants with nearly identical part
+numbers — `HUH721212ALE600` is SATA, `HUH721212AL5200` is SAS. Refurbished stock mixes them
+up constantly, because SAS drives are cheaper second-hand and listings conflate the two.
+
+A SAS drive physically cannot seat in a SATA backplane. SATA splits the drive edge into a
+15-pin power blade and a 7-pin signal blade with a notch between them; SAS bridges that notch
+into one continuous connector to carry its second port. The bridge is the keying feature. A
+SATA drive drops into a SAS backplane happily, but never the reverse — so if a drive goes
+*almost* all the way in and produces nothing, check the connector for the notch.
+
+**Capacity, in bytes.** `zpool replace` fails if the new device is even marginally smaller
+than the partition it replaces. Vendors' "12 TB" are not all the same number:
+
+```bash
+echo $(( $(cat /sys/block/sdd/size) * 512 ))
+```
+
+On `nas1` every member reads exactly `12000138625024`. Same model or larger is the safe buy.
+
+**Sector format.** A vdev's `ashift` is fixed at creation. If the pool was created at
+`ashift=9`, a 4Kn drive cannot serve 512-byte I/O and will not work as a replacement. Check
+with `zdb`, which needs root and is the only reading worth trusting:
+
+```bash
+sudo zdb -C space | grep -i ashift
+```
+
+`space` is `ashift=12`, so 512e and 4Kn are both fine here.
+
+## 2. The 3.3 V power-disable trap
+
+<Callout type="warn">
+  This is the one that costs hours. A drive affected by it is invisible to every software
+  diagnostic — no block device, no PHY link, nothing in `dmesg` — and behaves identically in
+  every bay you try, which makes it look like a dead drive or an uncabled backplane.
+</Callout>
+
+SATA revision 3.3 redefined **P3** of the 15-pin power connector. It had been a third 3.3 V
+supply pin; it became `PWDIS`, a control input. Held high, the drive stays in reset: it does
+not spin up, does not train a link, and does not announce itself. The feature exists so that
+datacentre operators can power-cycle one drive through the backplane instead of walking to
+the rack.
+
+Many enterprise drives from roughly 2017 onward implement it. Power supplies and backplanes
+that predate the change — including the one in `nas1` — still deliver 3.3 V on P1–P3 as
+ordinary power. The result is a perfectly healthy drive that never wakes up.
+
+<Callout type="info">
+  The reported SATA version is not a screening test. The drive fitted here identifies as
+  `SATA Version is: SATA 3.2` — nominally a revision older than the one that introduced
+  `PWDIS` — and honours power disable regardless. Vendors shipped the feature ahead of the
+  version string catching up, so assume any enterprise drive of this generation is affected
+  until proven otherwise.
+</Callout>
+
+The fix is to break that one connection. In order of preference:
+
+- A strip of Kapton tape over P3 — third pin from the 3.3 V end of the 15-pin segment.
+- A Molex-to-SATA power adapter, which carries no 3.3 V line at all.
+- Cutting the orange wire, if the lead is not shared with anything else.
+
+<Callout type="info">
+  On `nas1` the fix already existed as an undocumented piece of insulation on the drive that
+  came out. Moving it to the replacement made the drive appear immediately — and left the
+  old drive unable to power up. If you are keeping the old drive as a fallback during the
+  resilver, tape its P3 as well before you shelve it.
+</Callout>
+
+Every drive already running in such a chassis either carries the same mask or sits in a bay
+that does not supply 3.3 V, and nothing in software distinguishes the two — there is no
+IDENTIFY field or SMART attribute reporting whether a drive honours `PWDIS`. Consumer SSDs
+are not affected; the feature is an enterprise one. So the population at risk is every
+spinning enterprise drive in the box, and the fix on each is a strip of tape that is
+invisible once the drive is in its bay and can be dislodged by handling.
+
+Check and refresh the mask on all of them whenever the case is open. A drive that has run for
+years will not come back after a reseat if its tape has lifted, and the symptom — total
+invisibility — gives no hint of the cause.
+
+## 3. Find a port the drive can actually appear on
+
+Free ports at the controller are not the same as bays you can use. Two separate things have
+to be true.
+
+**The bay has to be cabled.** Count live links against disks:
+
+```bash
+for l in /sys/class/ata_link/link*; do
+  printf '%-8s %s\n' "$(basename "$l")" "$(cat "$l"/sata_spd)"
+done | sort -V
+```
+
+`nas1` shows eight links for eight disks. Every previous drive swap reused a bay that already
+had a drive in it, which proves nothing about the empty ones — a chassis with more bays than
+the builder cabled will happily accept a drive into a bay that goes nowhere.
+
+**The port has to be armed for hot insertion.** Read `PxCMD`:
+
+```bash
+for h in /sys/class/scsi_host/host*; do
+  echo "$(basename "$h") $(cat "$h"/ahci_port_cmd 2>/dev/null)"
+done
+```
+
+Bit 18 (`0x40000`) is `HPCP`, hot-plug capable. Bits 1 and 2 are `SUD` and `POD` — set when
+the port is driving the PHY and looking for a device. On `nas1` the two free 6 Gb/s ports on
+the Marvell 88SE9172 read `0x700010`: no `HPCP`, and `SUD`/`POD` clear. That port is
+electrically quiet, and a working drive inserted there produces nothing until the controller
+is re-initialised. The free Intel C2000 ports read `0x44016` — armed and listening, at
+3.0 Gb/s.
+
+For a 7200 rpm drive the speed difference does not matter: sustained transfer is roughly
+200–260 MB/s against SATA II's 300 MB/s ceiling, so the resilver takes the same time either
+way.
+
+If you do need a Marvell port to re-probe without rebooting, and it has no disks on it:
+
+```bash
+echo 1 | sudo tee /sys/bus/pci/devices/0000:04:00.0/remove
+echo 1 | sudo tee /sys/bus/pci/rescan
+```
+
+## 4. Identify the failing drive physically
+
+`nas1` has no locate LED. There is no SES enclosure (`/sys/class/enclosure` is empty), no
+`ledctl`, and `CAP.EMS` reads 0 on all four controllers, so the backplane is passive and
+nothing addressable can light a bay. That leaves the activity LED.
+
+First confirm the device letter still maps to the serial you mean. Letters move across
+reboots, and position in `zpool status` is vdev creation order, which says nothing about
+device naming:
+
+```bash
+for u in $(zpool status space | awk '/-.*-.*-.*-/ {print $1}'); do
+  p=$(readlink -f /dev/disk/by-partuuid/$u)
+  printf '%s  %s  %s\n' "$u" "$p" "$(lsblk -dno SERIAL /dev/$(lsblk -no PKNAME $p))"
+done
+```
+
+Then pulse the drive and watch for the bay that follows the rhythm:
+
+```bash
+# READ-ONLY. Ctrl-C to stop.
+while true; do
+  timeout 5 dd if=/dev/sdd of=/dev/null bs=1M iflag=direct status=none
+  sleep 5
+done
+```
+
+<Callout type="warn">
+  Check the direction of that `dd` before running it. `if=` the disk, `of=/dev/null`.
+  Reversed, it overwrites a live pool member.
+</Callout>
+
+`iflag=direct` is doing real work. Without `O_DIRECT` the second pass onward is served from
+the page cache, so the LED goes dark while `dd` still reports throughput.
+
+The pulsing matters too. A live pool gives every member background flicker, so "which one is
+busy" is a much weaker signal than "which one matches the beat".
+
+## 5. Take it offline before pulling
+
+```bash
+sudo zpool offline space ed5879e1-e883-441d-84a2-b2c919dd99b8
+sudo zpool status space          # expect DEGRADED, that member OFFLINE
+```
+
+Offlining first marks the device unavailable in the label before any I/O is issued to it, so
+the vdev transitions cleanly. Pulling a live member instead means ZFS discovers it through
+failed I/O — outstanding writes error, the vdev passes through `FAULTED`, and the error
+counters fill up for no diagnostic benefit.
+
+It also makes the replace unambiguous. Replacing an `OFFLINE` member tells ZFS the old device
+is intentionally gone; replacing one that is half-present invites reads from a drive whose
+failure mode is long timeouts rather than clean errors.
+
+Read the label as the drive comes out. It is the only check that cannot be fooled by a
+mistaken bay map. If the serial is wrong, put it back and `zpool online` before touching
+anything else.
+
+## 6. Confirm the new drive enumerated
+
+```bash
+lsblk -dno NAME,SIZE,MODEL,SERIAL,TRAN | grep -v '^zd'
+cat /sys/class/ata_link/link9/sata_spd
+```
+
+Two sysfs classes answer different questions, and keeping them apart saves a lot of guessing:
+
+| path | question | meaning |
+| --- | --- | --- |
+| `ata_link/linkN/sata_spd` | did the PHY train? | a speed means the cable and drive electronics are alive |
+| `ata_device/devN.0/class` | did it answer IDENTIFY? | `ata` is a disk, `atapi` is packet-command, `unknown` is no response |
+
+A speed with `class=unknown` is a drive that is present and failing to identify — suspect the
+drive or a marginal cable. No speed at all means the PHY never came up, which no amount of
+rescanning will fix: that is power, cabling, or `PWDIS`.
+
+<Callout type="info">
+  `echo "- - -" > /sys/class/scsi_host/hostN/scan` does not help a SATA drive that has not
+  linked. It walks the SCSI *target* space behind a transport that is already up, which is
+  meaningful for SAS expanders and iSCSI. SATA has one device per port and no target
+  enumeration, so with no link there is nothing to find — the rescan reports success and
+  changes nothing.
+</Callout>
+
+## 7. Check SMART before it joins the pool
+
+```bash
+sudo smartctl -i /dev/sdd
+sudo smartctl -H /dev/sdd
+sudo smartctl -A /dev/sdd
+sudo smartctl -l selftest /dev/sdd
+```
+
+Read the **normalised** `VALUE` against `THRESH`, not `RAW_VALUE`. OEM-badged drives are
+usually absent from smartctl's database — `MB012000GWDFE` is HPE's part number for this same
+He12 platform — and without a database entry smartctl applies a default raw format, so
+`RAW_VALUE` is uninterpretable. The normalised value is computed by the drive's own firmware
+and is what its overall-health verdict is based on.
+
+For helium drives, **attribute 22 is the helium level**, and it is the attribute that
+condemned the drive being replaced here at `001/025`. A healthy drive reads `100/025`.
+
+Note what the attribute table does *not* contain. The HPG5 firmware omits 197 (pending
+sectors), 198 (uncorrectable) and 199 (UDMA CRC). Their modern equivalents are still there,
+but in the general-purpose logs rather than the attribute table, so `-A` alone gives a
+misleadingly short list. `smartctl -x` reaches them:
+
+| missing attribute | equivalent in `-x` |
+| --- | --- |
+| 197 Current_Pending_Sector | **Pending Defects log** (GP Log 0x0c) |
+| 198 Offline_Uncorrectable | Device Statistics → *Number of Reported Uncorrectable Errors* |
+| 199 UDMA_CRC_Error_Count | Device Statistics → *Number of Interface CRC Errors*, and the **SATA Phy Event Counters** |
+| 5 Reallocated_Sector_Ct | Device Statistics → *Number of Reallocated Logical Sectors* |
+
+### Detecting reset counters
+
+`smartctl -x` is also how you find out whether a "refurbished" drive has had its hours
+zeroed. The hours counters and the I/O counters live in the same Device Statistics log but
+are not always cleared together, so they can be played off against each other:
+
+```
+Lifetime Power-On Resets       173
+Power-on Hours                   0
+Head Flying Hours                0
+Logical Sectors Written  225105272298     ← 115 TB
+Logical Sectors Read      80838202315     ←  41 TB
+Head Load Events              2687
+```
+
+That is the drive fitted here. Zero hours alongside 173 power-on resets, 2,687 head loads and
+156 TB of transfer is not a drive that has never run — it is a drive whose hours counter was
+reset and whose workload counters were not. The SCT temperature history is a second tell: it
+retained readings from before the drive arrived.
+
+<Callout type="info">
+  Reset counters are not automatically a reason to reject the drive. Convert the workload
+  into something meaningful instead — 115 TB written is 9.6 full-drive writes, against a
+  550 TB/year rated workload for this class. Light use of unknown duration, with zero
+  reallocated sectors, zero read-recovery attempts and no pending defects, is a reasonable
+  basis to proceed. An unknown number of hours is a monitoring problem, not a fault.
+</Callout>
+
+### Check the write cache
+
+OEM-badged drives frequently arrive with the write cache disabled, because the vendor's own
+RAID controllers manage it. In a ZFS pool that leaves one member writing through to platter
+while its peers write back, and on a resilver — where the new drive absorbs every write —
+it throttles the whole rebuild.
+
+```bash
+for d in sdd sde sdg sdh; do
+  printf '%-5s %-14s %s\n' "$d" "$(cat /sys/block/$d/queue/write_cache)" \
+    "$(lsblk -dno SERIAL /dev/$d)"
+done
+```
+
+`write back` is enabled, `write through` is disabled. The drive fitted here was the only
+`write through` member in the pool. Enable it with `sudo hdparm -W1 /dev/sdd`, and note that
+the setting is volatile — it reverts on power cycle unless something reapplies it at boot.
+
+Measured on this resilver, the change roughly doubled throughput: 63 MB/s issued before,
+124 MB/s after.
+
+<Callout type="info">
+  Treat the "time to go" figure as a comparison, not a schedule. `zpool status` derives it
+  from the cumulative average rate since the scan started, and the early phase is dominated
+  by metadata traversal that issues almost nothing — so the average starts low and the
+  estimate starts high. Resilvers routinely finish well ahead of their first prediction, and
+  the estimate falls as the average catches up with the current rate. It is a sound
+  before-and-after measure of the same quantity, and a poor forecast.
+</Callout>
+
+Once it is enabled, check where the remaining limit sits before reaching for ZFS scan
+tunables, because a resilver can be bound at either end:
+
+```bash
+snap() { awk '$3 ~ /^sd[a-z]$/ {print $3, $13}' /proc/diskstats; }
+snap > /tmp/a; sleep 10; snap > /tmp/b
+join /tmp/a /tmp/b | awk '{printf "%-5s %5.1f%%\n", $1, ($3-$2)/100}'
+```
+
+Field 13 of `/proc/diskstats` is milliseconds spent doing I/O, so the delta over a ten-second
+window is utilisation directly. Here the new drive sat at 96% while the three surviving
+members ran at 37–43%: the rebuild was bound by the device absorbing the writes, not by the
+ones being read, and no amount of `zfs_scan_vdev_limit` would have moved it.
+
+<Callout type="warn">
+  Write caching trades durability for speed: a drive can acknowledge a write it has not yet
+  committed. ZFS is built for this and issues cache flushes at transaction-group commit, which
+  is why every other member of this pool runs write-back. On a machine with no UPS and a
+  history of mains failures, it is still a deliberate choice rather than an automatic one.
+</Callout>
+
+The long self-test (`smartctl -t long`) takes 15+ hours on a 12 TB drive. Worth running if
+the new drive is fitted alongside the failing one; not worth it when the pool is sitting
+degraded waiting for it, since the resilver writes the whole device anyway and surfaces bad
+sectors as resilver errors.
+
+## 8. Replace and verify
+
+Always address the new drive by `/dev/disk/by-id/`, never by letter:
+
+```bash
+sudo zpool replace space ed5879e1-e883-441d-84a2-b2c919dd99b8 \
+  /dev/disk/by-id/ata-MB012000GWDFE_8HKUX68H
+sudo zpool status space
+```
+
+The pool stays `DEGRADED` until the resilver completes — roughly a day for 12 TB. When it
+finishes, the member's partuuid changes, so any notes recording the old one are stale.
+Re-derive the map rather than trusting what you wrote down:
+
+```bash
+for u in $(zpool status space | awk '/-.*-.*-.*-/ {print $1}'); do
+  p=$(readlink -f /dev/disk/by-partuuid/$u)
+  printf '%s  %s  %s\n' "$u" "$p" "$(lsblk -dno SERIAL /dev/$(lsblk -no PKNAME $p))"
+done
+```
+
+Then scrub, and keep the old drive on the shelf until that scrub comes back clean.
+
+## Related
+
+- [Diagnose ZFS checksum errors](/how-to/diagnose-zfs-checksum-errors) — what a `CKSUM`
+  count actually means, and how to find the damaged files behind it.
+- [Silent failures on nas1](/explanation/nas1-silent-failures) — why the helium failure
+  went unnoticed for months, and what monitoring would have caught it.

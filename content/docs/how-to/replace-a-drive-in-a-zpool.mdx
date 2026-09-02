@@ -85,6 +85,17 @@ The fix is to break that one connection. In order of preference:
   resilver, tape its P3 as well before you shelve it.
 </Callout>
 
+Every drive already running in such a chassis either carries the same mask or sits in a bay
+that does not supply 3.3 V, and nothing in software distinguishes the two — there is no
+IDENTIFY field or SMART attribute reporting whether a drive honours `PWDIS`. Consumer SSDs
+are not affected; the feature is an enterprise one. So the population at risk is every
+spinning enterprise drive in the box, and the fix on each is a strip of tape that is
+invisible once the drive is in its bay and can be dislodged by handling.
+
+Check and refresh the mask on all of them whenever the case is open. A drive that has run for
+years will not come back after a reseat if its tape has lifted, and the symptom — total
+invisibility — gives no hint of the cause.
+
 ## 3. Find a port the drive can actually appear on
 
 Free ports at the controller are not the same as bays you can use. Two separate things have
@@ -287,6 +298,23 @@ done
 `write back` is enabled, `write through` is disabled. The drive fitted here was the only
 `write through` member in the pool. Enable it with `sudo hdparm -W1 /dev/sdd`, and note that
 the setting is volatile — it reverts on power cycle unless something reapplies it at boot.
+
+Measured on this resilver, the change roughly doubled throughput: 63 MB/s issued and a
+five-day estimate before, 124 MB/s and two and a half days after.
+
+Once it is enabled, check where the remaining limit sits before reaching for ZFS scan
+tunables, because a resilver can be bound at either end:
+
+```bash
+snap() { awk '$3 ~ /^sd[a-z]$/ {print $3, $13}' /proc/diskstats; }
+snap > /tmp/a; sleep 10; snap > /tmp/b
+join /tmp/a /tmp/b | awk '{printf "%-5s %5.1f%%\n", $1, ($3-$2)/100}'
+```
+
+Field 13 of `/proc/diskstats` is milliseconds spent doing I/O, so the delta over a ten-second
+window is utilisation directly. Here the new drive sat at 96% while the three surviving
+members ran at 37–43%: the rebuild was bound by the device absorbing the writes, not by the
+ones being read, and no amount of `zfs_scan_vdev_limit` would have moved it.
 
 <Callout type="warn">
   Write caching trades durability for speed: a drive can acknowledge a write it has not yet

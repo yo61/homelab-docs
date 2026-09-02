@@ -12,10 +12,17 @@ allowBuilds:
 #
 # Temporary holds do the reverse: they cap a dependency deliberately, and are
 # exact by design. Each states the condition for its own removal.
+#
+# Dependabot cannot raise these floors itself. It bumps a transitive dependency
+# by running `pnpm update <name>@<version>`, which pnpm 11 rejects for indirect
+# dependencies (ERR_PNPM_UPDATE_VERSION_ON_INDIRECT_DEP). Every unlock attempt
+# exits 1, so the job reports "security_update_not_possible" and names the
+# already-locked version as the ceiling. Raise the floor here by hand instead.
+#
 overrides:
   postcss@<8.5.10: ^8.5.10
   brace-expansion@<1.1.16: ^1.1.16
-  fast-uri@<3.1.5: ^3.1.5
+  fast-uri@<3.1.6: ^3.1.6
   sharp@<0.35.0: ^0.35.3
 
   # Compatibility override. fumadocs-core 16.14.3 still declares zbsearch ^3.3.4,

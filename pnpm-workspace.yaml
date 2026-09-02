@@ -2,7 +2,7 @@ allowBuilds:
   esbuild: true
   sharp: true
 
-# Two kinds of entry live here, with opposite rules.
+# Two kinds of entry can live here, with opposite rules.
 #
 # Security floors raise a transitive dependency above a vulnerable version, and
 # must always use a caret. An exact pin turns the floor into a *ceiling*, so the
@@ -12,26 +12,20 @@ allowBuilds:
 #
 # Temporary holds do the reverse: they cap a dependency deliberately, and are
 # exact by design. Each states the condition for its own removal.
+#
+# Dependabot cannot raise these floors itself. It bumps a transitive dependency
+# by running `pnpm update <name>@<version>`, which pnpm 11 rejects for indirect
+# dependencies (ERR_PNPM_UPDATE_VERSION_ON_INDIRECT_DEP). Every unlock attempt
+# exits 1, so the job reports "security_update_not_possible" and names the
+# already-locked version as the ceiling. Raise the floor here by hand instead.
+#
 overrides:
   postcss@<8.5.10: ^8.5.10
   brace-expansion@<1.1.16: ^1.1.16
-  fast-uri@<3.1.5: ^3.1.5
+  fast-uri@<3.1.6: ^3.1.6
   sharp@<0.35.0: ^0.35.3
 
   # Compatibility override. fumadocs-core 16.14.3 still declares zbsearch ^3.3.4,
   # but this app initializes the static client directly; keep both call sites on
   # the Dependabot-updated major until fumadocs-core declares support for v4.
   zbsearch: ^4.0.0
-
-  # Temporary hold. fumadocs-core requires shiki ^4.4.1 from 16.14.1 onward, and
-  # 4.4.3 was published inside pnpm's minimumReleaseAge window, so a fresh
-  # resolution fails CI. 4.4.2 satisfies the range and is old enough.
-  # Remove once 4.4.3 has aged past the cutoff; shiki then floats again.
-  shiki: 4.4.2
-  "@shikijs/core": 4.4.2
-  "@shikijs/engine-javascript": 4.4.2
-  "@shikijs/engine-oniguruma": 4.4.2
-  "@shikijs/langs": 4.4.2
-  "@shikijs/primitive": 4.4.2
-  "@shikijs/themes": 4.4.2
-  "@shikijs/types": 4.4.2

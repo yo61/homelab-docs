@@ -1,0 +1,5 @@
+# The prek hooks shell out to `pnpm` (oxfmt, oxlint), so pnpm must resolve from a
+# non-interactive shell. mise does not read package.json's `packageManager`, so the
+# version is pinned here as well — keep the two in step.
+[tools]
+pnpm = "11.25.0"

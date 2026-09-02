@@ -230,16 +230,69 @@ and is what its overall-health verdict is based on.
 For helium drives, **attribute 22 is the helium level**, and it is the attribute that
 condemned the drive being replaced here at `001/025`. A healthy drive reads `100/025`.
 
-Note what the attribute table does *not* contain. The HPE firmware on this drive omits 197
-(pending sectors), 198 (uncorrectable) and 199 (UDMA CRC), so those cannot be checked at all.
-Absence of an attribute is not a pass.
+Note what the attribute table does *not* contain. The HPG5 firmware omits 197 (pending
+sectors), 198 (uncorrectable) and 199 (UDMA CRC). Their modern equivalents are still there,
+but in the general-purpose logs rather than the attribute table, so `-A` alone gives a
+misleadingly short list. `smartctl -x` reaches them:
+
+| missing attribute | equivalent in `-x` |
+| --- | --- |
+| 197 Current_Pending_Sector | **Pending Defects log** (GP Log 0x0c) |
+| 198 Offline_Uncorrectable | Device Statistics → *Number of Reported Uncorrectable Errors* |
+| 199 UDMA_CRC_Error_Count | Device Statistics → *Number of Interface CRC Errors*, and the **SATA Phy Event Counters** |
+| 5 Reallocated_Sector_Ct | Device Statistics → *Number of Reallocated Logical Sectors* |
+
+### Detecting reset counters
+
+`smartctl -x` is also how you find out whether a "refurbished" drive has had its hours
+zeroed. The hours counters and the I/O counters live in the same Device Statistics log but
+are not always cleared together, so they can be played off against each other:
+
+```
+Lifetime Power-On Resets       173
+Power-on Hours                   0
+Head Flying Hours                0
+Logical Sectors Written  225105272298     ← 115 TB
+Logical Sectors Read      80838202315     ←  41 TB
+Head Load Events              2687
+```
+
+That is the drive fitted here. Zero hours alongside 173 power-on resets, 2,687 head loads and
+156 TB of transfer is not a drive that has never run — it is a drive whose hours counter was
+reset and whose workload counters were not. The SCT temperature history is a second tell: it
+retained readings from before the drive arrived.
+
+<Callout type="info">
+  Reset counters are not automatically a reason to reject the drive. Convert the workload
+  into something meaningful instead — 115 TB written is 9.6 full-drive writes, against a
+  550 TB/year rated workload for this class. Light use of unknown duration, with zero
+  reallocated sectors, zero read-recovery attempts and no pending defects, is a reasonable
+  basis to proceed. An unknown number of hours is a monitoring problem, not a fault.
+</Callout>
+
+### Check the write cache
+
+OEM-badged drives frequently arrive with the write cache disabled, because the vendor's own
+RAID controllers manage it. In a ZFS pool that leaves one member writing through to platter
+while its peers write back, and on a resilver — where the new drive absorbs every write —
+it throttles the whole rebuild.
+
+```bash
+for d in sdd sde sdg sdh; do
+  printf '%-5s %-14s %s\n' "$d" "$(cat /sys/block/$d/queue/write_cache)" \
+    "$(lsblk -dno SERIAL /dev/$d)"
+done
+```
+
+`write back` is enabled, `write through` is disabled. The drive fitted here was the only
+`write through` member in the pool. Enable it with `sudo hdparm -W1 /dev/sdd`, and note that
+the setting is volatile — it reverts on power cycle unless something reapplies it at boot.
 
 <Callout type="warn">
-  A refurbished drive reporting `Power_On_Hours` of 0 has either genuinely never run or has
-  had its counters reset by the refurbisher, and the attributes alone cannot distinguish
-  those. Cross-check against the device statistics log, which lives in a different log page
-  and is not always reset alongside: `sudo smartctl -x /dev/sdd` and read *Power-on Hours*,
-  *Head Flying Hours* and *Lifetime Power-On Resets* under **Device Statistics**.
+  Write caching trades durability for speed: a drive can acknowledge a write it has not yet
+  committed. ZFS is built for this and issues cache flushes at transaction-group commit, which
+  is why every other member of this pool runs write-back. On a machine with no UPS and a
+  history of mains failures, it is still a deliberate choice rather than an automatic one.
 </Callout>
 
 The long self-test (`smartctl -t long`) takes 15+ hours on a 12 TB drive. Worth running if

@@ -299,8 +299,17 @@ done
 `write through` member in the pool. Enable it with `sudo hdparm -W1 /dev/sdd`, and note that
 the setting is volatile — it reverts on power cycle unless something reapplies it at boot.
 
-Measured on this resilver, the change roughly doubled throughput: 63 MB/s issued and a
-five-day estimate before, 124 MB/s and two and a half days after.
+Measured on this resilver, the change roughly doubled throughput: 63 MB/s issued before,
+124 MB/s after.
+
+<Callout type="info">
+  Treat the "time to go" figure as a comparison, not a schedule. `zpool status` derives it
+  from the cumulative average rate since the scan started, and the early phase is dominated
+  by metadata traversal that issues almost nothing — so the average starts low and the
+  estimate starts high. Resilvers routinely finish well ahead of their first prediction, and
+  the estimate falls as the average catches up with the current rate. It is a sound
+  before-and-after measure of the same quantity, and a poor forecast.
+</Callout>
 
 Once it is enabled, check where the remaining limit sits before reaching for ZFS scan
 tunables, because a resilver can be bound at either end:

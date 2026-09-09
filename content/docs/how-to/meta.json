@@ -9,6 +9,7 @@
     "drain-a-node",
     "add-a-new-service",
     "set-up-logging",
-    "upgrade-last-light"
+    "upgrade-last-light",
+    "classify-a-namespace"
   ]
 }

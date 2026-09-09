@@ -1,0 +1,112 @@
+---
+title: Classify a new namespace
+description: Clear the NamespaceUnclassified alert by giving a namespace its homelab.yo61.net/function label
+---
+
+Every namespace in the cluster carries a `homelab.yo61.net/function` label. The
+**NamespaceUnclassified** alert fires when one doesn't — usually because a new
+namespace was added and nobody classified it.
+
+This is hygiene, not a fault. Nothing is broken and nothing is down. An
+unclassified namespace is simply invisible: excluded from every function-scoped
+policy, and missing from the placement coverage metrics on the Placement
+dashboard.
+
+## Pick a value
+
+Four values, and every namespace gets exactly one:
+
+| value | what it means | namespaces |
+| --- | --- | --- |
+| `observability` | the monitoring stack — the one group with a placement policy | `monitoring`, `logging`, `tracing`, `otel` |
+| `platform` | infrastructure that serves the cluster | `cert-manager`, `external-secrets`, `external-dns`, `kyverno`, `spegel`, `tns-csi`, `gateway`, `cilium-secrets`, `kubelet-serving-cert-approver`, `flux-system` |
+| `apps` | workloads the cluster exists to run | `lastlight`, `lastlight-sandboxes`, `ntfy` |
+| `system` | Kubernetes' own | `default`, `kube-system`, `kube-public`, `kube-node-lease` |
+
+Only `observability` currently drives anything: the Kyverno placement policy
+selects on it to spread pods across nodes. The other three exist so that
+classification is **total**, which is the only reason the alert can have a steady
+state of zero. Give a new namespace the value that describes it, even when no
+policy reads that value yet.
+
+## Add the label
+
+Most namespaces are declared in one file:
+
+```yaml
+# infrastructure/controllers/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-new-namespace
+  labels:
+    homelab.yo61.net/function: platform
+```
+
+Commit, push, merge. Flux applies it and the alert clears on the next evaluation.
+
+## Where the label goes for the awkward ones
+
+Four namespaces can't be labelled that way. If you're classifying one of these,
+edit the place listed here instead — labelling them anywhere else either does
+nothing or gets reverted.
+
+**`flux-system`** — set it in the FluxInstance, not in `namespaces.yaml`:
+
+```yaml
+# clusters/homelab/flux-instance.yaml
+spec:
+  commonMetadata:
+    labels:
+      homelab.yo61.net/function: platform
+```
+
+flux-operator owns that namespace and **strips labels set by anything else** —
+measured, gone within 10 seconds of a reconcile. `commonMetadata` is the only
+writer it won't undo.
+
+**`cilium-secrets`** — a `postRenderers` patch on the Cilium HelmRelease
+(`infrastructure/controllers/cilium.yaml`). The chart hardcodes that namespace's
+labels and exposes no field for ours. The chart-wide `commonLabels` value does
+reach it, but it also lands on three pod templates and would roll the CNI on
+every node — don't use it for this.
+
+**`kubelet-serving-cert-approver`** — a `patches:` entry in
+`infrastructure/controllers/kustomization.yaml`. Its namespace comes from a
+remote URL base, so there's no local manifest to edit. Keep it a strategic-merge
+patch: the base sets `pod-security.kubernetes.io/*` labels, and a JSON-6902
+replace would drop them.
+
+**The four `system` namespaces** are already in `namespaces.yaml`, carrying
+`kustomize.toolkit.fluxcd.io/prune: Disabled`. Leave that annotation alone —
+without it, removing those entries from git would make Flux delete `kube-system`.
+
+## Check it worked
+
+```bash
+kubectl get ns -o json | jq -r '
+  .items[]
+  | select(.metadata.labels["homelab.yo61.net/function"] == null)
+  | .metadata.name'
+```
+
+No output means every namespace is classified. Anything listed is what the alert
+is complaining about.
+
+The alert clears on its own once the label lands — it needs `for: 30m` to fire,
+but goes back to inactive within one evaluation of the namespace being fixed.
+
+## Don't silence it
+
+The steady state of this alert is exactly zero, which is what makes it worth
+having. A silence doesn't hide noise here, it hides the one thing the alert
+detects — and it'll still be hidden months later when someone wonders why a
+namespace never got its policies. Classify the namespace instead; it's a
+one-line change.
+
+If the alert is firing and *every* namespace looks classified, suspect the
+metric rather than the label: `kube_namespace_labels` only exists while
+`namespaces=[homelab.yo61.net/function]` is present in the kube-state-metrics
+`metricLabelsAllowlist` (in `apps/monitoring/kube-prometheus-stack.yaml`). The
+alert is deliberately built on `kube_namespace_created`, which doesn't depend on
+that allowlist, so a broken allowlist makes it fire rather than fall silent.

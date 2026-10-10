@@ -78,7 +78,7 @@ and **persists across cluster rebuilds**, so this is a one-time step (re-run onl
 rotate). ESO then projects it into the `loki-s3` Secret the Loki HelmRelease reads.
 
 ```bash
-export BAO_ADDR=http://192.168.20.10:8200
+export BAO_ADDR=https://bao.lab.yo61.net:8200
 bao login
 ./scripts/sync-loki-secrets.sh        # writes kv/loki-s3
 ```

@@ -67,7 +67,7 @@ Wait for it to show **Running**. OpenBao boots **sealed** — that's expected.
 From wherever you have the `bao` CLI and the three unseal keys:
 
 ```bash
-export BAO_ADDR=http://192.168.20.10:8200
+export BAO_ADDR=https://bao.lab.yo61.net:8200
 bao status                 # reachable; Sealed = true
 bao operator unseal        # run 3× — one unseal key each (threshold is 3)
 bao status                 # Sealed = false

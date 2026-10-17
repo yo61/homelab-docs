@@ -51,6 +51,11 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+        env:
+          # jactionlint's online rules (yo61/global decisions/2026-10-17-retire-zizmor.md);
+          # local hooks stay offline.
+          JACTIONLINT_ONLINE: 1
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           prek-version: 0.4.13
 
